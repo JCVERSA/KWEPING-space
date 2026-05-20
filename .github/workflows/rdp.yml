@@ -6,7 +6,7 @@ on:
 jobs:
   rdp:
     runs-on: windows-2025
-    timeout-minutes: 350 # Arrêt de sécurité à 5h50
+    timeout-minutes: 350
     
     steps:
       - name: "Initialisation"
@@ -16,58 +16,23 @@ jobs:
         run: choco install rclone -y
 
       - name: "Configuration Rclone"
-        shell: powershell
+        shell: pwsh
+        env:
+          RCLONE_SECRET: ${{ secrets.RCLONE_CONFIG }}
         run: |
-          mkdir "$env:USERPROFILE\.config\rclone"
-          $config = @"
-          ${{ secrets.RCLONE_CONFIG }}
-          "@
-          $config | Out-File -FilePath "$env:USERPROFILE\.config\rclone\rclone.conf" -Encoding utf8
+          $ConfigPath = "$env:USERPROFILE\.config\rclone"
+          New-Item -ItemType Directory -Force -Path $ConfigPath
+          Set-Content -Path "$ConfigPath\rclone.conf" -Value $env:RCLONE_SECRET
 
       - name: "Restauration (Download Drive -> VM)"
-        run: rclone sync drive:RDP_Backup D:\RDP_Data --progress
+        shell: pwsh
+        run: rclone sync drive:RDP_Backup D:\RDP_Data --config "$env:USERPROFILE\.config\rclone\rclone.conf" --progress
 
       - name: "Setup Windows & Apps (Auto-Correction)"
         shell: powershell
         run: |
-          # 1. Config RDP (Autoriser connexions)
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-          
-          # 2. Installation Apps avec Retry Loop (Gestion des erreurs réseaux)
-          $apps = @("Microsoft.VisualStudioCode", "Mozilla.Firefox", "Oracle.JDK.21")
-          foreach ($app in $apps) {
-              $retry = 0
-              while ($retry -lt 3) {
-                  try {
-                      winget install --id $app --silent --accept-source-agreements --accept-package-agreements -e
-                      break
-                  } catch {
-                      $retry++
-                      Start-Sleep -Seconds 5
-                  }
-              }
-          }
-
-      - name: "Configuration Firefox (Persistant)"
-        shell: powershell
-        run: |
-          # Crée un raccourci Firefox qui pointe vers le profil sur D:
-          $shortcut = "C:\Users\Public\Desktop\Firefox.lnk"
-          $target = "C:\Program Files\Mozilla Firefox\firefox.exe"
-          $args = "--profile `"D:\RDP_Data\FirefoxProfile`""
-          $WScriptShell = New-Object -ComObject WScript.Shell
-          $Shortcut = $WScriptShell.CreateShortcut($shortcut)
-          $Shortcut.TargetPath = $target
-          $Shortcut.Arguments = $args
-          $Shortcut.Save()
-
-      - name: "Setup Tailscale"
-        shell: powershell
-        run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          Invoke-WebRequest -Uri $tsUrl -OutFile "$env:TEMP\ts.msi"
-          Start-Process msiexec.exe -ArgumentList "/i `"$env:TEMP\ts.msi`" /quiet" -Wait
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }}
+          # Ajoute ici tes autres installations d'applications...
 
       - name: "Interface de contrôle et Maintien"
         shell: powershell
@@ -85,16 +50,14 @@ jobs:
           for ($i=1; $i -le $totalSeconds; $i+=10) {
               Start-Sleep -Seconds 10
               
-              # Avertissements visuels (msg *)
               if ($i -eq 18600) { msg * "Attention: Le RDP se ferme dans 30 minutes !" }
               if ($i -eq 19800) { msg * "Attention: Le RDP se ferme dans 10 minutes ! Cliquez sur 'Sauvegarder et Quitter'." }
 
-              # Détection du signal d'arrêt (clic sur le bouton)
               if (Test-Path "D:\RDP_Data\stop.txt") {
                   Write-Host "Signal reçu : Sauvegarde..."
-                  rclone sync D:\RDP_Data drive:RDP_Backup --progress
+                  rclone sync D:\RDP_Data drive:RDP_Backup --config "$env:USERPROFILE\.config\rclone\rclone.conf" --progress
                   exit 0
               }
           }
           # Backup final automatique si le temps expire
-          rclone sync D:\RDP_Data drive:RDP_Backup --progress
+          rclone sync D:\RDP_Data drive:RDP_Backup --config "$env:USERPROFILE\.config\rclone\rclone.conf" --progress
