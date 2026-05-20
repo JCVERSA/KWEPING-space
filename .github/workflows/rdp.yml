@@ -1,182 +1,99 @@
-name: RDP
+name: RDP-Robust-Final
 
 on:
   workflow_dispatch:
 
 jobs:
-  secure-rdp:
+  rdp:
     runs-on: windows-2025
-    timeout-minutes: 350
-
+    timeout-minutes: 350 # Arrêt automatique à 5h50
+    
     steps:
-      - name: "Checkout repository"
+      - name: "Initialisation"
         uses: actions/checkout@v4
 
-      # ==========================================
-      # RESTAURATION DE LA MÉMOIRE SUR LE DISQUE D:
-      # ==========================================
-      - name: "Restaurer les données persistantes"
-        id: cache-rdp
-        uses: actions/cache@v4
-        with:
-          path: D:\RDP_Data
-          key: rdp-data-v1-${{ github.run_id }}
-          restore-keys: |
-            rdp-data-v1-
+      - name: "Installation Rclone"
+        run: choco install rclone -y
 
-      - name: "Initialiser l'arborescence persistante (Disque D)"
+      - name: "Configuration Rclone"
         shell: powershell
         run: |
-          $dirs = @(
-              "D:\RDP_Data",
-              "D:\RDP_Data\Projects",
-              "D:\RDP_Data\ChromeProfile",
-              "D:\RDP_Data\AndroidConfig\.android",
-              "D:\RDP_Data\AndroidConfig\.AndroidStudio",
-              "D:\RDP_Data\AndroidConfig\.gradle"
-          )
-          foreach ($dir in $dirs) {
-              if (-not (Test-Path $dir)) {
-                  New-Item -ItemType Directory -Path $dir -Force
+          mkdir "$env:USERPROFILE\.config\rclone"
+          $config = @"
+          ${{ secrets.RCLONE_CONFIG }}
+          "@
+          $config | Out-File -FilePath "$env:USERPROFILE\.config\rclone\rclone.conf" -Encoding utf8
+
+      - name: "Restauration (Download Drive -> VM)"
+        run: rclone sync drive:RDP_Backup D:\RDP_Data --progress
+
+      - name: "Setup Windows & Apps"
+        shell: powershell
+        run: |
+          # 1. Config RDP
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          
+          # 2. Installation Apps avec Retry
+          $apps = @("Google.Chrome", "Microsoft.VisualStudioCode", "Mozilla.Firefox", "Oracle.JDK.21")
+          foreach ($app in $apps) {
+              $retry = 0
+              while ($retry -lt 3) {
+                  try {
+                      winget install --id $app --silent --accept-source-agreements --accept-package-agreements -e
+                      break
+                  } catch {
+                      $retry++
+                      Start-Sleep -Seconds 5
+                  }
               }
           }
 
-      # ==========================================
-      # CONFIGURATION DU SYSTÈME & RDP
-      # ==========================================
-      - name: "Configure Core RDP Settings"
+      - name: "Configuration Firefox (Persistant)"
         shell: powershell
         run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+          $shortcut = "C:\Users\Public\Desktop\Firefox.lnk"
+          $target = "C:\Program Files\Mozilla Firefox\firefox.exe"
+          $args = "--profile `"D:\RDP_Data\FirefoxProfile`""
+          $WScriptShell = New-Object -ComObject WScript.Shell
+          $Shortcut = $WScriptShell.CreateShortcut($shortcut)
+          $Shortcut.TargetPath = $target
+          $Shortcut.Arguments = $args
+          $Shortcut.Save()
 
-          netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
-          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389 remoteip=100.64.0.0/10
-
-          Restart-Service -Name TermService -Force
-
-      - name: "Create RDP User"
-        shell: powershell
-        run: |
-          $securePass = ConvertTo-SecureString "${{ secrets.RDP_PASS }}" -AsPlainText -Force
-          if (-not (Get-LocalUser -Name "Neon" -ErrorAction SilentlyContinue)) {
-              New-LocalUser -Name "Neon" -Password $securePass -AccountNeverExpires
-              Add-LocalGroupMember -Group "Administrators" -Member "Neon"
-              Add-LocalGroupMember -Group "Remote Desktop Users" -Member "Neon"
-          }
-
-      # ==========================================
-      # INSTALLATION DES OUTILS DEV
-      # ==========================================
-      - name: "Installer les applications de travail"
-        shell: powershell
-        run: |
-          $packages = @(
-              "Google.Chrome",
-              "Microsoft.VisualStudioCode",
-              "Git.Git",
-              "Oracle.JDK.21",
-              "Google.AndroidStudio"
-          )
-          foreach ($pkg in $packages) {
-              Write-Host "Installation de $pkg..."
-              winget install --id $pkg --silent --accept-source-agreements --accept-package-agreements
-          }
-
-      # ==========================================
-      # FORCER LA PERSISTANCE D'ANDROID STUDIO SUR D:
-      # ==========================================
-      - name: "Rediriger les données Android Studio vers le disque D"
-        shell: powershell
-        run: |
-          [Environment]::SetEnvironmentVariable("GRADLE_USER_HOME", "D:\RDP_Data\AndroidConfig\.gradle", "Machine")
-          [Environment]::SetEnvironmentVariable("ANDROID_USER_HOME", "D:\RDP_Data\AndroidConfig\.android", "Machine")
-          [Environment]::SetEnvironmentVariable("ANDROID_EMULATOR_HOME", "D:\RDP_Data\AndroidConfig\.android", "Machine")
-          
-          echo "GRADLE_USER_HOME=D:\RDP_Data\AndroidConfig\.gradle" >> $env:GITHUB_ENV
-          echo "ANDROID_USER_HOME=D:\RDP_Data\AndroidConfig\.android" >> $env:GITHUB_ENV
-
-      # ==========================================
-      # RÉSEAU VPN (TAILSCALE)
-      # ==========================================
-      - name: "Install Tailscale"
+      - name: "Setup Tailscale"
         shell: powershell
         run: |
           $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $installerPath = "$env:TEMP\tailscale.msi"
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-          $process = Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait -PassThru
-          if ($process.ExitCode -ne 0) { exit 1 }
-          Remove-Item $installerPath -Force
+          Invoke-WebRequest -Uri $tsUrl -OutFile "$env:TEMP\ts.msi"
+          Start-Process msiexec.exe -ArgumentList "/i `"$env:TEMP\ts.msi`" /quiet" -Wait
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }}
 
-      - name: "Establish Tailscale Connection"
+      - name: "Interface de contrôle et Maintien"
         shell: powershell
         run: |
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-${{ github.run_id }}
-          $tsIP = $null
-          $retries = 0
-          while (-not $tsIP -and $retries -lt 12) {
-              Start-Sleep -Seconds 5
-              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-              $retries++
-          }
-          if (-not $tsIP) { exit 1 }
-          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-
-      # ==========================================
-      # MAINTIEN DE LA SESSION AVEC DETECTION D'ARRÊT
-      # ==========================================
-      - name: "Maintain Connection"
-        shell: powershell
-        run: |
-          $publicDesktop = "C:\Users\Public\Desktop"
-          if (-not (Test-Path $publicDesktop)) { New-Item -ItemType Directory -Path $publicDesktop -Force }
-          
-          $shortcutPath = "$publicDesktop\Sauvegarder_et_Quitter.bat"
-          $scriptContent = @"
+          # Création bouton "Sauvegarder et Quitter"
+          $script = @"
           @echo off
-          echo ===================================================
-          echo   SAUVEGARDE DE VOS PROJETS ET FERMETURE DU RDP
-          echo ===================================================
-          echo.
-          echo Envoi du signal d'arret a GitHub...
+          echo "Sauvegarde en cours, ne fermez pas..."
           echo stop > D:\RDP_Data\stop.txt
-          echo.
-          echo Vous pouvez desormais fermer cette fenetre RDP.
-          echo GitHub va valider la session et sauvegarder D:\RDP_Data.
-          echo.
-          pause
           "@
-          Set-Content -Path $shortcutPath -Value $scriptContent -Force
+          Set-Content "C:\Users\Public\Desktop\Sauvegarder_et_Quitter.bat" $script
 
-          Write-Host "`n===============================================" -ForegroundColor Green
-          Write-Host "          CONNEXION RDP PRÊTE                  " -ForegroundColor Green
-          Write-Host "===============================================" -ForegroundColor Green
-          Write-Host "Adresse IP Tailscale : $env:TAILSCALE_IP" -ForegroundColor Cyan
-          Write-Host "Utilisateur          : Neon" -ForegroundColor Cyan
-          Write-Host "Dossier Persistant   : D:\RDP_Data" -ForegroundColor Yellow
-          Write-Host "-----------------------------------------------"
-          Write-Host "⚠️ IMPORTANT POUR NE RIEN PERDRE : ⚠️" -ForegroundColor Red
-          Write-Host "Quand vous avez fini, double-cliquez sur l'icone" -ForegroundColor Yellow
-          Write-Host "  'Sauvegarder_et_Quitter' directement sur le" -ForegroundColor Yellow
-          Write-Host "  bureau de votre machine Windows virtuelle !" -ForegroundColor Yellow
-          Write-Host "==============================================="`n
-
-          $maxSeconds = 20400
-          $elapsed = 0
-          
-          if (Test-Path "D:\RDP_Data\stop.txt") { Remove-Item "D:\RDP_Data\stop.txt" -Force }
-
-          while ($elapsed -lt $maxSeconds) {
-              if (Test-Path "D:\RDP_Data\stop.txt") {
-                  Remove-Item "D:\RDP_Data\stop.txt" -Force
-                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Signal d'arret recu ! Fermeture propre pour sauvegarde..." -ForegroundColor Green
-                  break
-              }
+          # Boucle de surveillance avec Alertes visuelles
+          $totalSeconds = 20400
+          for ($i=1; $i -le $totalSeconds; $i+=10) {
               Start-Sleep -Seconds 10
-              $elapsed += 10
-              if (($elapsed % 300) -eq 0) {
-                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Session RDP toujours active..."
+              
+              # Avertissements à 30min et 10min de la fin
+              if ($i -eq 18600) { msg * "Attention: Le RDP se ferme dans 30 minutes !" }
+              if ($i -eq 19800) { msg * "Attention: Le RDP se ferme dans 10 minutes ! Cliquez sur 'Sauvegarder et Quitter'." }
+
+              # Détection signal arrêt
+              if (Test-Path "D:\RDP_Data\stop.txt") {
+                  Write-Host "Signal reçu, synchronisation..."
+                  rclone sync D:\RDP_Data drive:RDP_Backup --progress
+                  exit 0
               }
           }
+          # Backup final automatique si temps écoulé
+          rclone sync D:\RDP_Data drive:RDP_Backup --progress
