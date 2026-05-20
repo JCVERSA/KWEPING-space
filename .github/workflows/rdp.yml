@@ -6,7 +6,7 @@ on:
 jobs:
   rdp:
     runs-on: windows-2025
-    timeout-minutes: 350 # Arrêt automatique à 5h50
+    timeout-minutes: 350 # Arrêt de sécurité à 5h50
     
     steps:
       - name: "Initialisation"
@@ -27,14 +27,14 @@ jobs:
       - name: "Restauration (Download Drive -> VM)"
         run: rclone sync drive:RDP_Backup D:\RDP_Data --progress
 
-      - name: "Setup Windows & Apps"
+      - name: "Setup Windows & Apps (Auto-Correction)"
         shell: powershell
         run: |
-          # 1. Config RDP
+          # 1. Config RDP (Autoriser connexions)
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           
-          # 2. Installation Apps avec Retry
-          $apps = @("Google.Chrome", "Microsoft.VisualStudioCode", "Mozilla.Firefox", "Oracle.JDK.21")
+          # 2. Installation Apps avec Retry Loop (Gestion des erreurs réseaux)
+          $apps = @("Microsoft.VisualStudioCode", "Mozilla.Firefox", "Oracle.JDK.21")
           foreach ($app in $apps) {
               $retry = 0
               while ($retry -lt 3) {
@@ -51,6 +51,7 @@ jobs:
       - name: "Configuration Firefox (Persistant)"
         shell: powershell
         run: |
+          # Crée un raccourci Firefox qui pointe vers le profil sur D:
           $shortcut = "C:\Users\Public\Desktop\Firefox.lnk"
           $target = "C:\Program Files\Mozilla Firefox\firefox.exe"
           $args = "--profile `"D:\RDP_Data\FirefoxProfile`""
@@ -71,29 +72,29 @@ jobs:
       - name: "Interface de contrôle et Maintien"
         shell: powershell
         run: |
-          # Création bouton "Sauvegarder et Quitter"
+          # Création bouton "Sauvegarder et Quitter" sur le bureau
           $script = @"
           @echo off
-          echo "Sauvegarde en cours, ne fermez pas..."
+          echo "Sauvegarde en cours... Ne fermez pas la fenetre !"
           echo stop > D:\RDP_Data\stop.txt
           "@
           Set-Content "C:\Users\Public\Desktop\Sauvegarder_et_Quitter.bat" $script
 
-          # Boucle de surveillance avec Alertes visuelles
-          $totalSeconds = 20400
+          # Boucle de surveillance active
+          $totalSeconds = 20400 # 340 minutes
           for ($i=1; $i -le $totalSeconds; $i+=10) {
               Start-Sleep -Seconds 10
               
-              # Avertissements à 30min et 10min de la fin
+              # Avertissements visuels (msg *)
               if ($i -eq 18600) { msg * "Attention: Le RDP se ferme dans 30 minutes !" }
               if ($i -eq 19800) { msg * "Attention: Le RDP se ferme dans 10 minutes ! Cliquez sur 'Sauvegarder et Quitter'." }
 
-              # Détection signal arrêt
+              # Détection du signal d'arrêt (clic sur le bouton)
               if (Test-Path "D:\RDP_Data\stop.txt") {
-                  Write-Host "Signal reçu, synchronisation..."
+                  Write-Host "Signal reçu : Sauvegarde..."
                   rclone sync D:\RDP_Data drive:RDP_Backup --progress
                   exit 0
               }
           }
-          # Backup final automatique si temps écoulé
+          # Backup final automatique si le temps expire
           rclone sync D:\RDP_Data drive:RDP_Backup --progress
