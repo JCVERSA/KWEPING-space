@@ -22,17 +22,24 @@ jobs:
         run: |
           $ConfigPath = "$env:USERPROFILE\.config\rclone"
           New-Item -ItemType Directory -Force -Path $ConfigPath
-          Set-Content -Path "$ConfigPath\rclone.conf" -Value $env:RCLONE_SECRET
+          # Utilisation de Set-Content sans BOM pour éviter les erreurs de lecture
+          $env:RCLONE_SECRET | Set-Content -Path "$ConfigPath\rclone.conf" -Encoding utf8NoBOM
 
       - name: "Restauration (Download Drive -> VM)"
         shell: pwsh
-        run: rclone sync drive:RDP_Backup D:\RDP_Data --config "$env:USERPROFILE\.config\rclone\rclone.conf" --progress
+        run: |
+          rclone sync drive:RDP_Backup D:\RDP_Data --config "$env:USERPROFILE\.config\rclone\rclone.conf" --progress
 
-      - name: "Setup Windows & Apps (Auto-Correction)"
+      - name: "Setup Windows & Apps"
         shell: powershell
         run: |
+          # 1. Config RDP (Autoriser connexions)
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-          # Ajoute ici tes autres installations d'applications...
+          
+          # 2. Installation Tailscale (Exemple d'intégration)
+          # Assure-toi que ton secret TAILSCALE_AUTH_KEY est bien configuré
+          # Start-Process msiexec.exe -ArgumentList "/i `"$env:TEMP\ts.msi`" /quiet" -Wait
+          # & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }}
 
       - name: "Interface de contrôle et Maintien"
         shell: powershell
@@ -45,14 +52,16 @@ jobs:
           "@
           Set-Content "C:\Users\Public\Desktop\Sauvegarder_et_Quitter.bat" $script
 
-          # Boucle de surveillance active
-          $totalSeconds = 20400 # 340 minutes
+          # Boucle de surveillance active (340 minutes)
+          $totalSeconds = 20400 
           for ($i=1; $i -le $totalSeconds; $i+=10) {
               Start-Sleep -Seconds 10
               
+              # Avertissements visuels
               if ($i -eq 18600) { msg * "Attention: Le RDP se ferme dans 30 minutes !" }
               if ($i -eq 19800) { msg * "Attention: Le RDP se ferme dans 10 minutes ! Cliquez sur 'Sauvegarder et Quitter'." }
 
+              # Détection du signal d'arrêt (clic sur le bouton)
               if (Test-Path "D:\RDP_Data\stop.txt") {
                   Write-Host "Signal reçu : Sauvegarde..."
                   rclone sync D:\RDP_Data drive:RDP_Backup --config "$env:USERPROFILE\.config\rclone\rclone.conf" --progress
