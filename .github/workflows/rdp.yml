@@ -1,4 +1,4 @@
-name: RDP-Robust-Cache
+name: RDP-Robust-Cache-Final
 
 on:
   workflow_dispatch:
@@ -6,52 +6,71 @@ on:
 jobs:
   rdp:
     runs-on: windows-2025
-    timeout-minutes: 350
+    timeout-minutes: 350 # Arrêt automatique de sécurité générale à 5h50
     
     steps:
-      - name: "Initialisation"
+      - name: "Initialisation du dépôt"
         uses: actions/checkout@v4
 
-      # 1. Restauration du Cache (Firefox et Projets séparés)
-      - name: "Restaurer Cache Firefox"
+      - name: "Préparation de l'espace disque D:"
+        shell: powershell
+        run: |
+          if (!(Test-Path "D:\RDP_Data\FirefoxProfile")) { New-Item -ItemType Directory -Force -Path "D:\RDP_Data\FirefoxProfile" }
+          if (!(Test-Path "D:\RDP_Data\Projects")) { New-Item -ItemType Directory -Force -Path "D:\RDP_Data\Projects" }
+
+      - name: "Restaurer le profil Firefox"
         uses: actions/cache@v4
         with:
           path: D:\RDP_Data\FirefoxProfile
           key: firefox-profile-${{ github.run_id }}
-          restore-keys: firefox-profile-
+          restore-keys: |
+            firefox-profile-
 
-      - name: "Restaurer Cache Projets"
+      - name: "Restaurer les Projets de Code"
         uses: actions/cache@v4
         with:
           path: D:\RDP_Data\Projects
-          key: projects-${{ github.run_id }}
-          restore-keys: projects-
+          key: rdp-projects-${{ github.run_id }}
+          restore-keys: |
+            rdp-projects-
 
-      - name: "Setup Windows & Apps"
+      - name: "Installation et Configuration des Applications"
         shell: powershell
         run: |
-          # Config RDP
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           
-          # Installation apps (avec boucle de sécurité)
           $apps = @("Microsoft.VisualStudioCode", "Mozilla.Firefox", "Oracle.JDK.21")
           foreach ($app in $apps) {
-              winget install --id $app --silent --accept-source-agreements --accept-package-agreements -e
+              $retry = 0
+              $success = $false
+              while (($retry -lt 3) -and ($success -eq $false)) {
+                  try {
+                      Write-Host "Installation de $app (Tentative $($retry + 1)/3)..."
+                      winget install --id $app --silent --accept-source-agreements --accept-package-agreements -e
+                      $success = $true
+                  } catch {
+                      $retry++
+                      Write-Host "Échec de l'installation de $app. Nouvelle tentative dans 10 secondes..."
+                      Start-Sleep -Seconds 10
+                  }
+              }
           }
 
-      - name: "Configuration Firefox (Persistant)"
+      - name: "Configuration de l'environnement persistant"
         shell: powershell
         run: |
-          $shortcut = "C:\Users\Public\Desktop\Firefox.lnk"
-          $target = "C:\Program Files\Mozilla Firefox\firefox.exe"
-          $args = "--profile `"D:\RDP_Data\FirefoxProfile`""
+          $shortcutPath = "C:\Users\Public\Desktop\Firefox.lnk"
+          $targetPath = "C:\Program Files\Mozilla Firefox\firefox.exe"
+          $arguments = "--profile `"D:\RDP_Data\FirefoxProfile`""
+          
           $WScriptShell = New-Object -ComObject WScript.Shell
-          $Shortcut = $WScriptShell.CreateShortcut($shortcut)
-          $Shortcut.TargetPath = $target
-          $Shortcut.Arguments = $args
+          $Shortcut = $WScriptShell.CreateShortcut($shortcutPath)
+          $Shortcut.TargetPath = $targetPath
+          $Shortcut.Arguments = $arguments
           $Shortcut.Save()
 
-      - name: "Setup Tailscale"
+      - name: "Connexion sécurisée Tailscale"
         shell: powershell
         run: |
           $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
@@ -59,24 +78,63 @@ jobs:
           Start-Process msiexec.exe -ArgumentList "/i `"$env:TEMP\ts.msi`" /quiet" -Wait
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }}
 
-      - name: "Interface de contrôle"
+      - name: "Boucle de maintien de session et Compte à Rebours Visuel"
         shell: powershell
         run: |
-          # Alertes visuelles
+          if (Test-Path "D:\RDP_Data\stop.txt") { Remove-Item "D:\RDP_Data\stop.txt" -Force }
+
+          # Bouton d'arrêt rapide sur le bureau
+          $buttonScript = @"
+          @echo off
+          title Sauvegarde et Fermeture RDP
+          echo ===================================================
+          echo Fermeture propre des outils et envoi du signal...
+          echo ===================================================
+          echo stop > D:\RDP_Data\stop.txt
+          pause
+          "@
+          Set-Content "C:\Users\Public\Desktop\Sauvegarder_et_Quitter.bat" $buttonScript
+
+          # Durée maximale : 340 minutes (20400 secondes)
           $totalSeconds = 20400
-          for ($i=1; $i -le $totalSeconds; $i+=10) {
+          $lastNotificationMinutes = 340
+
+          for ($elapsed = 0; $elapsed -lt $totalSeconds; $elapsed += 10) {
               Start-Sleep -Seconds 10
-              if ($i -eq 18600) { msg * "Attention: Le RDP se ferme dans 30 minutes !" }
-              if ($i -eq 19800) { msg * "Attention: Le RDP se ferme dans 10 minutes ! Fermez Firefox et VS Code." }
+              
+              $remainingSeconds = $totalSeconds - $elapsed
+              $remainingMinutes = [math]::Floor($remainingSeconds / 60)
+
+              # 1. Notification régulière toutes les 30 minutes
+              if (($remainingMinutes % 30 -eq 0) -and ($remainingMinutes -ne $lastNotificationMinutes) -and ($remainingMinutes -gt 30)) {
+                  msg * "RAPPEL RDP : Il vous reste environ $remainingMinutes minutes avant la sauvegarde automatique."
+                  $lastNotificationMinutes = $remainingMinutes
+              }
+
+              # 2. Alertes critiques à l'approche de la fin
+              if ($elapsed -eq 18600) { # Il reste 30 minutes
+                  msg * "ALERTE RDP : Attention ! Il ne reste plus que 30 minutes de session."
+              }
+              if ($elapsed -eq 19800) { # Il reste 10 minutes
+                  msg * "URGENT RDP : Plus que 10 minutes ! Enregistrez votre code et lancez le script 'Sauvegarder_et_Quitter' sur le bureau."
+              }
+
+              # Interception du bouton d'arrêt
+              if (Test-Path "D:\RDP_Data\stop.txt") {
+                  Write-Host "Signal d'arrêt manuel reçu."
+                  break
+              }
           }
 
-      # 2. Nettoyage avant la fin (CRUCIAL pour le cache)
-      - name: "Nettoyage avant sauvegarde"
+      - name: "Fermeture sécurisée et libération des fichiers"
         if: always()
         shell: powershell
         run: |
-          Write-Host "Fermeture des processus verrouillants..."
-          stop-process -name "firefox" -Force -ErrorAction SilentlyContinue
-          stop-process -name "Code" -Force -ErrorAction SilentlyContinue
-          stop-process -name "java" -Force -ErrorAction SilentlyContinue
+          Write-Host "Arrêt des applications pour libérer les verrous du cache..."
+          Stop-Process -Name "firefox" -Force -ErrorAction SilentlyContinue
+          Stop-Process -Name "Code" -Force -ErrorAction SilentlyContinue
+          Stop-Process -Name "java" -Force -ErrorAction SilentlyContinue
+          Stop-Process -Name "adb" -Force -ErrorAction SilentlyContinue
+          
           Start-Sleep -Seconds 5
+          Write-Host "Système prêt pour la mise en cache globale de GitHub."
