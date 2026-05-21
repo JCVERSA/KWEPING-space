@@ -13,23 +13,15 @@ jobs:
         uses: actions/checkout@v4
 
       # ==========================================
-      # RESTAURATION DE LA MÉMOIRE SUR LE DISQUE D:
+      # 1. INITIALISATION DE L'ARBORESCENCE SUR D:
       # ==========================================
-      - name: "Restaurer les données persistantes"
-        id: cache-rdp
-        uses: actions/cache@v4
-        with:
-          path: D:\RDP_Data
-          key: rdp-data-v1-${{ github.run_id }}
-          restore-keys: |
-            rdp-data-v1-
-
-      - name: "Initialiser l'arborescence persistante (Disque D)"
+      - name: "Initialiser l'arborescence sur le Disque D"
         shell: powershell
         run: |
           $dirs = @(
               "D:\RDP_Data",
               "D:\RDP_Data\Projects",
+              "D:\RDP_Data\FirefoxProfile",
               "D:\RDP_Data\AndroidConfig\.android",
               "D:\RDP_Data\AndroidConfig\.AndroidStudio",
               "D:\RDP_Data\AndroidConfig\.gradle"
@@ -39,6 +31,39 @@ jobs:
                   New-Item -ItemType Directory -Path $dir -Force
               }
           }
+
+      # ==========================================
+      # 2. RESTAURATION DES CACHES MULTIPLES
+      # ==========================================
+      - name: "Cache 1 : Projets Personnels"
+        uses: actions/cache@v4
+        with:
+          path: D:\RDP_Data\Projects
+          key: rdp-projects-${{ github.run_id }}
+          restore-keys: rdp-projects-
+
+      - name: "Cache 2 : Profil Firefox"
+        uses: actions/cache@v4
+        with:
+          path: D:\RDP_Data\FirefoxProfile
+          key: rdp-firefox-${{ github.run_id }}
+          restore-keys: rdp-firefox-
+
+      - name: "Cache 3 : Dépendances Gradle"
+        uses: actions/cache@v4
+        with:
+          path: D:\RDP_Data\AndroidConfig\.gradle
+          key: rdp-gradle-${{ github.run_id }}
+          restore-keys: rdp-gradle-
+
+      - name: "Cache 4 : Config & SDK Android Studio"
+        uses: actions/cache@v4
+        with:
+          path: |
+            D:\RDP_Data\AndroidConfig\.android
+            D:\RDP_Data\AndroidConfig\.AndroidStudio
+          key: rdp-android-studio-${{ github.run_id }}
+          restore-keys: rdp-android-studio-
 
       # ==========================================
       # CONFIGURATION DU SYSTÈME & RDP
@@ -71,6 +96,7 @@ jobs:
       - name: "Installer les applications de travail"
         shell: powershell
         run: |
+          winget source update --disable-interactivity
           $packages = @(
               "Mozilla.Firefox",
               "Microsoft.VisualStudioCode",
@@ -156,7 +182,7 @@ jobs:
           echo stop > D:\RDP_Data\stop.txt
           echo.
           echo Vous pouvez desormais fermer cette fenetre RDP.
-          echo GitHub va valider la session et sauvegarder D:\RDP_Data.
+          echo GitHub va valider la session et sauvegarder vos dossiers.
           echo.
           pause
           "@
@@ -168,7 +194,6 @@ jobs:
           Write-Host "Adresse IP Tailscale : $env:TAILSCALE_IP" -ForegroundColor Cyan
           Write-Host "Utilisateur          : Neon" -ForegroundColor Cyan
           Write-Host "Mot de passe         : [Utilisez votre secret RDP_PASS]" -ForegroundColor Cyan
-          Write-Host "Dossier Persistant   : D:\RDP_Data" -ForegroundColor Yellow
           Write-Host "-----------------------------------------------"
           Write-Host "⚠️ IMPORTANT POUR NE RIEN PERDRE : ⚠️" -ForegroundColor Red
           Write-Host "Quand vous avez fini, double-cliquez sur l'icone" -ForegroundColor Yellow
@@ -195,13 +220,13 @@ jobs:
           }
 
       # ==========================================
-      # NETTOYAGE POUR SAUVEGARDE DU CACHE
+      # NETTOYAGE POUR SAUVEGARDE DES CACHES
       # ==========================================
       - name: "Fermeture des outils et libération des fichiers"
         if: always()
         shell: powershell
         run: |
-          Write-Host "Arrêt des applications pour permettre au cache de se sauvegarder proprement..."
+          Write-Host "Arrêt des applications pour libérer les verrous sur les fichiers..."
           Stop-Process -Name "firefox" -Force -ErrorAction SilentlyContinue
           Stop-Process -Name "Code" -Force -ErrorAction SilentlyContinue
           Stop-Process -Name "java" -Force -ErrorAction SilentlyContinue
@@ -209,4 +234,4 @@ jobs:
           Stop-Process -Name "adb" -Force -ErrorAction SilentlyContinue
           
           Start-Sleep -Seconds 5
-          Write-Host "Fichiers libérés. Lancement de la sauvegarde du cache GitHub."
+          Write-Host "Fichiers libérés. Lancement de la sauvegarde des caches GitHub."
