@@ -47,8 +47,8 @@ jobs:
           $Password = ConvertTo-SecureString "${{ secrets.RDP_PASS }}" -AsPlainText -Force
           Set-LocalUser -Name "Neon" -Password $Password
           
-          # FIX CRITIQUE : Accepter les accords de source Winget et MsStore pour éviter le blocage interactif
-          winget source update --accept-source-agreements
+          # FIX CRITIQUE : Mise à jour des sources Winget en forçant la non-interactivité sans argument invalide
+          winget source update --disable-interactivity
           
           # Installation des outils requis avec gestion des échecs (Retry)
           $apps = @("Microsoft.VisualStudioCode", "Mozilla.Firefox", "Oracle.JDK.21")
@@ -58,7 +58,7 @@ jobs:
               while (($retry -lt 3) -and ($success -eq $false)) {
                   try {
                       Write-Host "Installation de $app (Tentative $($retry + 1)/3)..."
-                      # Ajout de la gestion explicite des sources et de l'architecture pour sécuriser le déploiement
+                      # Ici l'argument '--accept-source-agreements' est parfaitement valide et accepté par la commande install
                       winget install --id $app --silent --accept-source-agreements --accept-package-agreements --disable-interactivity -e
                       $success = $true
                   } catch {
