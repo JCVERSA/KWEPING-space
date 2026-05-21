@@ -38,9 +38,14 @@ jobs:
       - name: "Installation et Configuration des Applications"
         shell: powershell
         run: |
-          # Activation des accès Bureau à Distance (RDP)
+          # Configuration RDP et activation des accès
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          
+          # Configuration du compte utilisateur personnalisé "Neon" avec ton secret de passe
+          Rename-LocalUser -Name "runneradmin" -NewName "Neon"
+          $Password = ConvertTo-SecureString "${{ secrets.RDP_PASS }}" -AsPlainText -Force
+          Set-LocalUser -Name "Neon" -Password $Password
           
           # Installation des outils requis avec gestion des échecs (Retry)
           $apps = @("Microsoft.VisualStudioCode", "Mozilla.Firefox", "Oracle.JDK.21")
@@ -66,7 +71,12 @@ jobs:
           # Configuration du raccourci Firefox pour charger le profil sur le disque D:
           $shortcutPath = "C:\Users\Public\Desktop\Firefox.lnk"
           $targetPath = "C:\Program Files\Mozilla Firefox\firefox.exe"
-          $arguments = "--profile `"D:\RDP_Data\FirefoxProfile`""
+          
+          if ((Get-ChildItem "D:\RDP_Data\FirefoxProfile").Count -eq 0) {
+              $arguments = ""
+          } else {
+              $arguments = "--profile `"D:\RDP_Data\FirefoxProfile`""
+          }
           
           $WScriptShell = New-Object -ComObject WScript.Shell
           $Shortcut = $WScriptShell.CreateShortcut($shortcutPath)
@@ -74,18 +84,30 @@ jobs:
           $Shortcut.Arguments = $arguments
           $Shortcut.Save()
 
-      - name: "Connexion sécurisée Tailscale"
+      - name: "Connexion sécurisée Tailscale et Informations RDP"
         shell: powershell
         run: |
+          # Installation de Tailscale
           $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
           Invoke-WebRequest -Uri $tsUrl -OutFile "$env:TEMP\ts.msi"
           Start-Process msiexec.exe -ArgumentList "/i `"$env:TEMP\ts.msi`" /quiet" -Wait
           & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }}
+          
+          # Récupération de l'adresse IP Tailscale assignée
+          $tsIP = (& "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4).Trim()
+
+          # Menu affichant les informations essentielles de connexion
+          Write-Host "=========================================================="
+          Write-Host "            INFORMATIONS DE CONNEXION RDP                 "
+          Write-Host "=========================================================="
+          Write-Host "Adresse IP RDP (Tailscale) : $tsIP"
+          Write-Host "Nom d'utilisateur          : Neon"
+          Write-Host "Mot de passe               : [Utilise ton secret RDP_PASS]"
+          Write-Host "=========================================================="
 
       - name: "Boucle de maintien de session"
         shell: powershell
         run: |
-          # Suppression d'un ancien signal de fin résiduel sur le disque D:
           if (Test-Path "D:\RDP_Data\stop.txt") { Remove-Item "D:\RDP_Data\stop.txt" -Force }
 
           # Création de l'icône d'arrêt sur le bureau
@@ -104,7 +126,6 @@ jobs:
           for ($i = 0; $i -lt $totalSeconds; $i += 10) {
               Start-Sleep -Seconds 10
 
-              # Interception du signal manuel généré par ton bouton du bureau
               if (Test-Path "D:\RDP_Data\stop.txt") {
                   Write-Host "Signal d'arrêt intercepté. Fermeture en cours..."
                   break
