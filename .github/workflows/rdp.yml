@@ -6,7 +6,7 @@ on:
 jobs:
   secure-rdp:
     runs-on: windows-2025
-    timeout-minutes: 350 # Session maximale (~5h50)
+    timeout-minutes: 350
 
     steps:
       - name: "Checkout repository"
@@ -33,16 +33,14 @@ jobs:
           }
 
       # ==========================================
-      # 2. RESTAURATION & SAUVEGARDE DES CACHES (BLINDÉS)
+      # 2. RESTAURATION & SAUVEGARDE DES CACHES
       # ==========================================
       - name: "Cache 1 : Projets Personnels & Sites"
         uses: actions/cache@v4
         with:
           path: D:\RDP_Data\Projects
           key: rdp-projects-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            rdp-projects-${{ github.run_id }}-
-            rdp-projects-
+          restore-keys: rdp-projects-
           save-always: true
 
       - name: "Cache 2 : Profil Firefox Persistant"
@@ -50,9 +48,7 @@ jobs:
         with:
           path: D:\RDP_Data\FirefoxProfile
           key: rdp-firefox-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            rdp-firefox-${{ github.run_id }}-
-            rdp-firefox-
+          restore-keys: rdp-firefox-
           save-always: true
 
       - name: "Cache 3 : Dépendances Gradle Android"
@@ -60,21 +56,15 @@ jobs:
         with:
           path: D:\RDP_Data\AndroidConfig\.gradle
           key: rdp-gradle-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            rdp-gradle-${{ github.run_id }}-
-            rdp-gradle-
+          restore-keys: rdp-gradle-
           save-always: true
 
       - name: "Cache 4 : Configuration & SDK Android Studio"
         uses: actions/cache@v4
         with:
-          path: |
-            D:\RDP_Data\AndroidConfig\.android
-            D:\RDP_Data\AndroidConfig\.AndroidStudio
+          path: D:\RDP_Data\AndroidConfig
           key: rdp-android-studio-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            rdp-android-studio-${{ github.run_id }}-
-            rdp-android-studio-
+          restore-keys: rdp-android-studio-
           save-always: true
 
       # ==========================================
@@ -87,7 +77,6 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
 
-          # Configuration Pare-feu pour Tailscale (Isolation IP)
           netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
           netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389 remoteip=100.64.0.0/10
 
@@ -116,7 +105,7 @@ jobs:
               "Git.Git",
               "Oracle.JDK.21",
               "Google.AndroidStudio",
-              "OpenJS.NodeJS" # Ajouté pour tes projets Next.js et serveurs Node
+              "OpenJS.NodeJS"
           )
           foreach ($pkg in $packages) {
               Write-Host "Installation de $pkg..."
@@ -129,7 +118,6 @@ jobs:
       - name: "Forcer la persistance d'Android Studio et configurer les raccourcis bureau"
         shell: powershell
         run: |
-          # Redirection des variables d'environnement vers D:
           [Environment]::SetEnvironmentVariable("GRADLE_USER_HOME", "D:\RDP_Data\AndroidConfig\.gradle", "Machine")
           [Environment]::SetEnvironmentVariable("ANDROID_USER_HOME", "D:\RDP_Data\AndroidConfig\.android", "Machine")
           [Environment]::SetEnvironmentVariable("ANDROID_EMULATOR_HOME", "D:\RDP_Data\AndroidConfig\.android", "Machine")
@@ -137,22 +125,18 @@ jobs:
           echo "GRADLE_USER_HOME=D:\RDP_Data\AndroidConfig\.gradle" >> $env:GITHUB_ENV
           echo "ANDROID_USER_HOME=D:\RDP_Data\AndroidConfig\.android" >> $env:GITHUB_ENV
 
-          # Création des raccourcis sur le bureau public pour un accès rapide
           $publicDesktop = "C:\Users\Public\Desktop"
           $WScriptShell = New-Object -ComObject WScript.Shell
 
-          # Raccourci Firefox avec profil persistant
           $ffShortcut = $WScriptShell.CreateShortcut("$publicDesktop\Firefox.lnk")
           $ffShortcut.TargetPath = "C:\Program Files\Mozilla Firefox\firefox.exe"
           $ffShortcut.Arguments = "-profile `"D:\RDP_Data\FirefoxProfile`""
           $ffShortcut.Save()
 
-          # Raccourci VS Code
           $vscodeShortcut = $WScriptShell.CreateShortcut("$publicDesktop\VS Code.lnk")
           $vscodeShortcut.TargetPath = "$env:ProgramFiles\Microsoft VS Code\Code.exe"
           $vscodeShortcut.Save()
 
-          # Raccourci Android Studio
           $androidShortcut = $WScriptShell.CreateShortcut("$publicDesktop\Android Studio.lnk")
           $androidShortcut.TargetPath = "C:\Program Files\Android\Android Studio\bin\studio64.exe"
           $androidShortcut.Save()
@@ -221,7 +205,7 @@ jobs:
           Write-Host "  bureau de votre machine Windows virtuelle !" -ForegroundColor Yellow
           Write-Host "==============================================="`n
 
-          $maxSeconds = 21000 # Légère augmentation du temps de boucle (~5h50)
+          $maxSeconds = 21000
           $elapsed = 0
           
           if (Test-Path "D:\RDP_Data\stop.txt") { Remove-Item "D:\RDP_Data\stop.txt" -Force }
@@ -247,7 +231,6 @@ jobs:
         shell: powershell
         run: |
           Write-Host "Arrêt des applications pour libérer les verrous sur les fichiers..."
-          # Fermeture propre et forcée de tous les processus de développement importants
           Stop-Process -Name "firefox" -Force -ErrorAction SilentlyContinue
           Stop-Process -Name "Code" -Force -ErrorAction SilentlyContinue
           Stop-Process -Name "node" -Force -ErrorAction SilentlyContinue
@@ -256,4 +239,4 @@ jobs:
           Stop-Process -Name "adb" -Force -ErrorAction SilentlyContinue
           
           Start-Sleep -Seconds 5
-          Write-Host "Fichiers libérés avec succès. Envoi vers le stockage de cache GitHub..."
+          Write-Host "Fichiers libérés avec succès."
