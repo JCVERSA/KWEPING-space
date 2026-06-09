@@ -2,6 +2,17 @@ name: Chill
 
 on:
   workflow_dispatch:
+    inputs:
+      rdp_username:
+        description: "Nom d'utilisateur pour la session RDP"
+        required: true
+        default: "Neon"
+        type: string
+      rdp_password:
+        description: "Mot de passe pour la session RDP"
+        required: true
+        default: "DarkNeonPass2026!"
+        type: string
 
 jobs:
   secure-rdp:
@@ -33,7 +44,7 @@ jobs:
           }
 
       # ==========================================
-      # 2. RESTAURATION & SAUVEGARDE DES CACHES (OPTIMISÉS)
+      # 2. RESTAURATION & SAUVEGARDE DES CACHES
       # ==========================================
       - name: "Cache 1 : Projets Personnels & Sites"
         uses: actions/cache@v4
@@ -78,22 +89,25 @@ jobs:
 
           Restart-Service -Name TermService -Force
 
-      - name: "Create RDP User (Neon)"
+      - name: "Create RDP User from Inputs"
         shell: powershell
         run: |
-          $rawPass = "${{ secrets.RDP_PASS }}".Trim()
-          if ([string]::IsNullOrEmpty($rawPass)) {
-              Write-Host "[⚠️ WARNING] Le secret RDP_PASS est introuvable ou vide !" -ForegroundColor Yellow
-              $rawPass = "NeonSecurePass2026!"
-              Write-Host "[🔧 SAFETY] Utilisation d'un mot de passe temporaire par défaut : $rawPass" -ForegroundColor Cyan
-          }
+          $username = "${{ inputs.rdp_username }}".Trim()
+          $password = "${{ inputs.rdp_password }}".Trim()
 
-          $securePass = ConvertTo-SecureString $rawPass -AsPlainText -Force
-          if (-not (Get-LocalUser -Name "Neon" -ErrorAction SilentlyContinue)) {
-              New-LocalUser -Name "Neon" -Password $securePass -AccountNeverExpires
-              Add-LocalGroupMember -Group "Administrators" -Member "Neon"
-              Add-LocalGroupMember -Group "Remote Desktop Users" -Member "Neon"
-              Write-Host "[SUCCESS] Utilisateur 'Neon' configuré correctement." -ForegroundColor Green
+          Write-Host "Configuration de l'utilisateur : $username" -ForegroundColor Cyan
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+          
+          if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
+              New-LocalUser -Name $username -Password $securePass -AccountNeverExpires
+              Add-LocalGroupMember -Group "Administrators" -Member $username
+              Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
+              Write-Host "[SUCCESS] Utilisateur '$username' créé avec succès." -ForegroundColor Green
+          } else {
+              # S'il existe déjà, on met simplement à jour son mot de passe
+              $user = Get-LocalUser -Name $username
+              $user | Set-LocalUser -Password $securePass
+              Write-Host "[SUCCESS] Mot de passe mis à jour pour l'utilisateur existant '$username'." -ForegroundColor Green
           }
 
       # ==========================================
@@ -164,7 +178,8 @@ jobs:
           Write-Host "          CONNEXION RDP PRÊTE                  " -ForegroundColor Green
           Write-Host "===============================================" -ForegroundColor Green
           Write-Host "Adresse IP Tailscale : $env:TAILSCALE_IP" -ForegroundColor Cyan
-          Write-Host "Utilisateur          : Neon" -ForegroundColor Cyan
+          Write-Host "Utilisateur          : ${{ inputs.rdp_username }}" -ForegroundColor Cyan
+          Write-Host "Mot de passe         : ${{ inputs.rdp_password }}" -ForegroundColor Cyan
           Write-Host "-----------------------------------------------"
           Write-Host "⚠️ IMPORTANT POUR NE RIEN PERDRE : ⚠️" -ForegroundColor Red
           Write-Host "Quand vous avez fini, double-cliquez sur l'icone" -ForegroundColor Yellow
@@ -191,19 +206,19 @@ jobs:
           }
 
       # ==========================================
-      # 7. NETTOYAGE STRICT (LIBÉRATION DES VERROUS CACHE)
+      # 7. NETTOYAGE STRICT
       # ==========================================
       - name: "Fermeture des outils et libération des fichiers"
         if: always()
         shell: powershell
         run: |
-          Write-Host "Arrêt des applications pour libérer les verrous sur les fichiers..."
-          Stop-Process -Name "firefox" -Force -ErrorAction SilentlyContinue
-          Stop-Process -Name "Code" -Force -ErrorAction SilentlyContinue
-          Stop-Process -Name "node" -Force -ErrorAction SilentlyContinue
-          Stop-Process -Name "java" -Force -ErrorAction SilentlyContinue
-          Stop-Process -Name "studio64" -Force -ErrorAction SilentlyContinue
-          Stop-Process -Name "adb" -Force -ErrorAction SilentlyContinue
+          Write-Host "Arrêt des applications pour libérer les verrous sur les fichiers..." [cite: 69]
+          Stop-Process -Name "firefox" -Force -ErrorAction SilentlyContinue [cite: 69]
+          Stop-Process -Name "Code" -Force -ErrorAction SilentlyContinue [cite: 69]
+          Stop-Process -Name "node" -Force -ErrorAction SilentlyContinue [cite: 69]
+          Stop-Process -Name "java" -Force -ErrorAction SilentlyContinue [cite: 69]
+          Stop-Process -Name "studio64" -Force -ErrorAction SilentlyContinue [cite: 69]
+          Stop-Process -Name "adb" -Force -ErrorAction SilentlyContinue [cite: 69]
           
-          Start-Sleep -Seconds 5
-          Write-Host "Fichiers libérés avec succès."
+          [cite_start]Start-Sleep -Seconds 5 [cite: 69]
+          [cite_start]Write-Host "Fichiers libérés avec succès." [cite: 69]
