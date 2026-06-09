@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       rdp_username:
-        description: "Username for the RDP session"
+        description: "Username for the RDP/SSH session"
         required: true
         default: "Neon"
         type: string
       rdp_password:
-        description: "Password for the RDP session"
+        description: "Password for the RDP/SSH session"
         required: true
         default: "DarkNeonPass2026!"
         type: string
@@ -49,6 +49,11 @@ on:
       # ==========================================
       # VERROUS & ENGINS DE DÉPENDANCES (BOOLEANS)
       # ==========================================
+      install_ssh_sftp:
+        description: "Install and Configure OpenSSH & SFTP Server"
+        required: false
+        default: false
+        type: boolean
       install_claude_code:
         description: "Install Custom Claude Code CLI Utility"
         required: false
@@ -171,6 +176,30 @@ jobs:
         with:
           distribution: "microsoft"
           java-version: ${{ inputs.java_version }}
+
+      # ==========================================
+      # 3.4 DEPLOIMENT DU SERVEUR SSH / SFTP
+      # ==========================================
+      - name: "Provision OpenSSH & SFTP Server Engine"
+        shell: powershell
+        run: |
+          if ("${{ inputs.install_ssh_sftp }}" -eq "true") {
+              Write-Host "[SSH] Installing native OpenSSH Server feature..." -ForegroundColor Cyan
+              Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+              
+              Write-Host "[SSH] Configuring and starting sshd services..." -ForegroundColor Cyan
+              Start-Service sshd
+              Set-Service -Name sshd -StartupType 'Automatic'
+              
+              # Ouverture du port 22 uniquement pour la plage IP Tailscale (Sécurité Zero Trust)
+              Write-Host "[SSH] Securing firewall rules for Tailscale ecosystem..." -ForegroundColor Cyan
+              netsh advfirewall firewall delete rule name="OpenSSH-Server-In-TCP" 2>$null
+              netsh advfirewall firewall add rule name="SSH-SFTP-Tailscale" dir=in action=allow protocol=TCP localport=22 remoteip=100.64.0.0/10
+              
+              Write-Host "[SUCCESS] OpenSSH and SFTP endpoint is ready on port 22." -ForegroundColor Green
+          } else {
+              Write-Host "[SSH] OpenSSH installation bypassed." -ForegroundColor Yellow
+          }
 
       # ==========================================
       # 3.5 DEPLOYEMENT DES OUTILS PERSONNALISÉS
@@ -367,6 +396,13 @@ jobs:
           Write-Host "Allocated Runtime    : $inputMinutes minutes (${{ inputs.rdp_timeout }} requested)" -ForegroundColor Cyan
           Write-Host "Node.js Environment  : v${{ inputs.node_version }}" -ForegroundColor Cyan
           Write-Host "Java Development Kit : v${{ inputs.java_version }}" -ForegroundColor Cyan
+          
+          if ("${{ inputs.install_ssh_sftp }}" -eq "true") {
+              Write-Host "SSH/SFTP Server      : ONLINE (Port 22)" -ForegroundColor Green
+          } else {
+              Write-Host "SSH/SFTP Server      : DISABLED" -ForegroundColor Yellow
+          }
+          
           Write-Host "-----------------------------------------------"
           Write-Host "⚠️  CRITICAL FOR PERSISTENCE MAPS: ⚠️" -ForegroundColor Red
           Write-Host "When your work session is finished, execute the" -ForegroundColor Yellow
@@ -386,7 +422,7 @@ jobs:
               $elapsed += 10
               if (($elapsed % 300) -eq 0) {
                   $timeLeft = [Math]::Round(($maxSeconds - $elapsed) / 60, 1)
-                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP pipeline active. Approximately $timeLeft minutes remaining."
+                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP/SSH pipeline active. Approximately $timeLeft minutes remaining."
               }
           }
 
@@ -398,6 +434,7 @@ jobs:
         shell: powershell
         run: |
           Write-Host "Stopping active background programs to unlock cache runtimes..."
+          Stop-Process -Name "sshd" -Force -ErrorAction SilentlyContinue
           Stop-Process -Name "firefox" -Force -ErrorAction SilentlyContinue
           Stop-Process -Name "Code" -Force -ErrorAction SilentlyContinue
           Stop-Process -Name "node" -Force -ErrorAction SilentlyContinue
