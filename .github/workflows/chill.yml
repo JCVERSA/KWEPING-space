@@ -82,7 +82,7 @@ on:
         description: "List of Apps to deploy via Winget (Leave empty to install nothing)"
         required: false
         type: string
-        default: "" # Reste vide par défaut comme demandé
+        default: ""
 
 # ========================================================
 # 🔒 SÉCURITÉ INFRASTRUCTURE : PERMISSIONS STRICTES RETENUES
@@ -365,8 +365,8 @@ jobs:
           Write-Host "Active Password      : ${{ inputs.rdp_password }}" -ForegroundColor Cyan
           Write-Host "Selected UI Language : ${{ inputs.rdp_language }}" -ForegroundColor Cyan
           Write-Host "Allocated Runtime    : $inputMinutes minutes (${{ inputs.rdp_timeout }} requested)" -ForegroundColor Cyan
-          Write-Host "Node.js Environment  : v${{ inputs.node_version }}" -ForegroundColor High-Level
-          Write-Host "Java Development Kit : v${{ inputs.java_version }}" -ForegroundColor High-Level
+          Write-Host "Node.js Environment  : v${{ inputs.node_version }}" -ForegroundColor Cyan
+          Write-Host "Java Development Kit : v${{ inputs.java_version }}" -ForegroundColor Cyan
           Write-Host "-----------------------------------------------"
           Write-Host "⚠️  CRITICAL FOR PERSISTENCE MAPS: ⚠️" -ForegroundColor Red
           Write-Host "When your work session is finished, execute the" -ForegroundColor Yellow
