@@ -48,11 +48,11 @@ on:
 
 jobs:
   secure-rdp:
-    # 🔒 REPOSITORY LOCK: Prevents the workflow from executing on any unauthorized fork
-    if: github.repository == 'JCVERSA/nom-de-ton-repo'
+    # 🔒 REPOSITORY LOCK: Le workflow refusera catégoriquement de s'exécuter sur un fork tiers
+    if: github.repository == 'JCVERSA/KWEPING-space'
     runs-on: windows-2025
     
-    # 🔒 APPROVAL LOCK: Links the execution to a protected GitHub environment requiring validation
+    # 🔒 APPROVAL LOCK: Demande ton feu vert obligatoire avant d'allouer les ressources
     environment: Production
     
     # Dynamic allocation bound to user input with a system hard-cap limit at 360
@@ -157,152 +157,4 @@ jobs:
           if ($lang -eq "fr-FR") {
               Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Nls\Language" -Name "InstallLanguage" -Value "040c" -Force
               Set-WinHomeLocation -GeoId 84
-          } elseif ($lang -eq "es-ES") {
-              Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Nls\Language" -Name "InstallLanguage" -Value "0c0a" -Force
-              Set-WinHomeLocation -GeoId 217
-          } else {
-              Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Nls\Language" -Name "InstallLanguage" -Value "0409" -Force
-              Set-WinHomeLocation -GeoId 244
-          }
-          Write-Host "[SUCCESS] Regional and execution policies applied for $lang." -ForegroundColor Green
-
-      - name: "Create RDP User from Inputs"
-        shell: powershell
-        run: |
-          $username = "${{ inputs.rdp_username }}".Trim()
-          $password = "${{ inputs.rdp_password }}".Trim()
-
-          Write-Host "Configuring system user account: $username" -ForegroundColor Cyan
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          
-          if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
-              New-LocalUser -Name $username -Password $securePass -AccountNeverExpires
-              Add-LocalGroupMember -Group "Administrators" -Member $username
-              Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
-              Write-Host "[SUCCESS] User account '$username' deployed successfully." -ForegroundColor Green
-          } else {
-              $user = Get-LocalUser -Name $username
-              $user | Set-LocalUser -Password $securePass
-              Write-Host "[SUCCESS] Credentials updated for existing user '$username'." -ForegroundColor Green
-          }
-
-      # ==========================================
-      # 6. ENVIRONMENT VARIABLES PERSISTENCE
-      # ==========================================
-      - name: "Enforce persistent environment structures"
-        shell: powershell
-        run: |
-          [Environment]::SetEnvironmentVariable("GRADLE_USER_HOME", "D:\RDP_Data\AndroidConfig\.gradle", "Machine")
-          [Environment]::SetEnvironmentVariable("ANDROID_USER_HOME", "D:\RDP_Data\AndroidConfig\.android", "Machine")
-          [Environment]::SetEnvironmentVariable("ANDROID_EMULATOR_HOME", "D:\RDP_Data\AndroidConfig\.android", "Machine")
-          
-          echo "GRADLE_USER_HOME=D:\RDP_Data\AndroidConfig\.gradle" >> $env:GITHUB_ENV
-          echo "ANDROID_USER_HOME=D:\RDP_Data\AndroidConfig\.android" >> $env:GITHUB_ENV
-
-      # ==========================================
-      # 7. VPN NETWORKING (TAILSCALE)
-      # ==========================================
-      - name: "Install Tailscale Engine"
-        shell: powershell
-        run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $installerPath = "$env:TEMP\tailscale.msi"
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-          $process = Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait -PassThru
-          if ($process.ExitCode -ne 0) { exit 1 }
-          Remove-Item $installerPath -Force
-
-      - name: "Establish Tailscale Connection"
-        shell: powershell
-        run: |
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-${{ github.run_id }}
-          $tsIP = $null
-          $retries = 0
-          while (-not $tsIP -and $retries -lt 12) {
-              Start-Sleep -Seconds 5
-              $tsIP = (& "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4).Trim()
-              $retries++
-          }
-          if (-not $tsIP) { exit 1 }
-          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-
-      # ==========================================
-      # 8. SESSION RUNTIME & SHUTDOWN DETECTION
-      # ==========================================
-      - name: "Maintain Connection Loop"
-        shell: powershell
-        run: |
-          $publicDesktop = "C:\Users\Public\Desktop"
-          $shortcutPath = "$publicDesktop\Save_and_Exit.bat"
-          $scriptContent = @"
-          @echo off
-          echo ===================================================
-          echo    SAVING YOUR PROJECTS AND CLOSING WORKSPACE RDP
-          echo ===================================================
-          echo.
-          echo Transmitting stop notification flag to GitHub...
-          echo stop > D:\RDP_Data\stop.txt
-          echo.
-          echo You can now safely close this Remote Desktop window.
-          echo GitHub Actions will finalize cache commit operations.
-          echo.
-          pause
-          "@
-          Set-Content -Path $shortcutPath -Value $scriptContent -Force
-
-          # Calculate runtime dynamically from input mapping
-          [int]$inputMinutes = ${{ inputs.rdp_timeout }}
-          if ($inputMinutes -gt 350 -or $inputMinutes -le 0) { $inputMinutes = 350 }
-          $maxSeconds = $inputMinutes * 60
-          $elapsed = 0
-
-          Write-Host "`n===============================================" -ForegroundColor Green
-          Write-Host "          WINDOWS RDP RUNTIME ONLINE           " -ForegroundColor Green
-          Write-Host "===============================================" -ForegroundColor Green
-          Write-Host "Tailscale IP Address : $env:TAILSCALE_IP" -ForegroundColor Cyan
-          Write-Host "Active Username      : ${{ inputs.rdp_username }}" -ForegroundColor Cyan
-          Write-Host "Active Password      : ${{ inputs.rdp_password }}" -ForegroundColor Cyan
-          Write-Host "Selected UI Language : ${{ inputs.rdp_language }}" -ForegroundColor Cyan
-          Write-Host "Allocated Runtime    : $inputMinutes minutes (${{ inputs.rdp_timeout }} requested)" -ForegroundColor Cyan
-          Write-Host "Node.js Environment  : v${{ inputs.node_version }}" -ForegroundColor High-Level
-          Write-Host "Java Development Kit : v${{ inputs.java_version }}" -ForegroundColor High-Level
-          Write-Host "-----------------------------------------------"
-          Write-Host "⚠️  CRITICAL FOR PERSISTENCE MAPS: ⚠️" -ForegroundColor Red
-          Write-Host "When your work session is finished, execute the" -ForegroundColor Yellow
-          Write-Host "  'Save_and_Exit' script shortcut found directly" -ForegroundColor Yellow
-          Write-Host "  on your cloud instance Windows Desktop interface!" -ForegroundColor Yellow
-          Write-Host "==============================================="`n
-          
-          if (Test-Path "D:\RDP_Data\stop.txt") { Remove-Item "D:\RDP_Data\stop.txt" -Force }
-
-          while ($elapsed -lt $maxSeconds) {
-              if (Test-Path "D:\RDP_Data\stop.txt") {
-                  Remove-Item "D:\RDP_Data\stop.txt" -Force
-                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Shutdown trigger caught! Initializing unmount procedures..." -ForegroundColor Green
-                  break
-              }
-              Start-Sleep -Seconds 10
-              $elapsed += 10
-              if (($elapsed % 300) -eq 0) {
-                  $timeLeft = [Math]::Round(($maxSeconds - $elapsed) / 60, 1)
-                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP pipeline active. Approximately $timeLeft minutes remaining."
-              }
-          }
-
-      # ==========================================
-      # 9. PROCESS PURGE & CACHE LOCK RELEASE
-      # ==========================================
-      - name: "Kill processes and release file system locks"
-        if: always()
-        shell: powershell
-        run: |
-          Write-Host "Stopping active background programs to unlock cache runtimes..."
-          Stop-Process -Name "firefox" -Force -ErrorAction SilentlyContinue
-          Stop-Process -Name "Code" -Force -ErrorAction SilentlyContinue
-          Stop-Process -Name "node" -Force -ErrorAction SilentlyContinue
-          Stop-Process -Name "java" -Force -ErrorAction SilentlyContinue
-          Stop-Process -Name "studio64" -Force -ErrorAction SilentlyContinue
-          Stop-Process -Name "adb" -Force -ErrorAction SilentlyContinue
-          
-          Start-Sleep -Seconds 5
-          Write-Host "File locks released successfully. System ready for safe cache tracking."
+          } elseif ($lang -eq "es-
