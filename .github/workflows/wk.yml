@@ -47,7 +47,7 @@ on:
           - "11" # Legacy Android Compatibility
 
       # ==========================================
-      # VERROUS & ENGINS DE DÉPENDANCES (BOOLeANS)
+      # VERROUS & ENGINS DE DÉPENDANCES (BOOLEANS)
       # ==========================================
       install_claude_code:
         description: "Install Custom Claude Code CLI Utility"
@@ -79,10 +79,10 @@ on:
       # ZONE DE CHARGEMENT DE MASSE (50+ APPS)
       # ==========================================
       custom_winget_apps:
-        description: "List of Apps to deploy via Winget (Space-separated IDs)"
+        description: "List of Apps to deploy via Winget (Leave empty to install nothing)"
         required: false
         type: string
-        default: "7zip.7zip Google.Chrome Mozilla.Firefox Notepad++.Notepad++ VideoLAN.VLC GIMP.GIMP Git.Git PerformanceTools.开源GpuZ"
+        default: "" # 👈 Modifié : Vide par défaut pour ne rien installer si non renseigné
 
 jobs:
   secure-rdp:
@@ -217,6 +217,8 @@ jobs:
                       winget install --silent --accept-source-agreements --accept-package-agreements --id $app
                   }
               }
+          } else {
+              Write-Host "[WINGET] No custom apps provided. Skipping execution step." -ForegroundColor Yellow
           }
 
       # ==========================================
@@ -304,6 +306,9 @@ jobs:
           if ($process.ExitCode -ne 0) { exit 1 }
           Remove-Item $installerPath -Force
 
+      # ==========================================
+      # 7.5 ESTABLISH NETWORK LINK
+      # ==========================================
       - name: "Establish Tailscale Connection"
         shell: powershell
         run: |
