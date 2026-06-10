@@ -44,14 +44,14 @@ on:
           - "17" # Standard LTS for modern Android Studio
           - "21" # Next-Gen Enterprise OpenJDK
           - "11" # Legacy Android Compatibility
-      ssh_default_shell:
+      ssh_shell:
         description: "Default shell for the SSH session"
         required: true
-        default: "PowerShell"
+        default: "powershell"
         type: choice
         options:
-          - "PowerShell"
-          - "Command Prompt"
+          - "powershell"
+          - "cmd"
 
       # ==========================================
       # LOCKS & DEPENDENCY ENGINES (BOOLEANS)
@@ -212,16 +212,17 @@ jobs:
               netsh advfirewall firewall add rule name="SSH-SFTP-Tailscale" dir=in action=allow protocol=TCP localport=22 remoteip=100.64.0.0/10
 
               # Configuring default shell
-              $shellChoice = "${{ inputs.ssh_default_shell }}"
+              $shellChoice = "${{ inputs.ssh_shell }}"
               Write-Host "[SSH] Configuring default shell to: $shellChoice" -ForegroundColor Cyan
 
-              $shellExe = if ($shellChoice -eq "PowerShell") { "powershell.exe" } else { "cmd.exe" }
+              $shellExe = if ($shellChoice -eq "powershell") { "powershell.exe" } else { "cmd.exe" }
               $shellPath = (Get-Command $shellExe).Source
 
               if (-not (Test-Path "HKLM:\SOFTWARE\OpenSSH")) {
                   New-Item -Path "HKLM:\SOFTWARE\OpenSSH" -Force | Out-Null
               }
-              Set-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name "DefaultShell" -Value $shellPath -Force
+              New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name "DefaultShell" -Value $shellPath -PropertyType String -Force
+              Restart-Service sshd -Force
               
               Write-Host "[SUCCESS] OpenSSH and SFTP endpoint is ready on port 22." -ForegroundColor Green
           } else {
@@ -425,7 +426,7 @@ jobs:
           Write-Host "Java Development Kit : v${{ inputs.java_version }}" -ForegroundColor Cyan
           
           if ("${{ inputs.install_ssh_sftp }}" -eq "true") {
-              Write-Host "SSH/SFTP Server      : ONLINE (Port 22)" -ForegroundColor Green
+              Write-Host "SSH/SFTP Server      : $((Get-Service sshd).Status) (Shell: ${{ inputs.ssh_shell }})" -ForegroundColor Green
           } else {
               Write-Host "SSH/SFTP Server      : DISABLED" -ForegroundColor Yellow
           }
