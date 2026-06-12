@@ -9,7 +9,7 @@ on:
         default: "Neon"
         type: string
       rdp_password:
-        description: "Password for the RDP/SSH session"
+        description: "Password for RDP/SSH (Must meet Windows Server complexity requirements)"
         required: true
         type: string
       rdp_language:
