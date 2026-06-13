@@ -12,33 +12,10 @@ jobs:
       - name: "Checkout repository"
         uses: actions/checkout@v4
 
-      - name: "Verify Drive D Availability"
+      - name: "Initialize Environment"
         shell: powershell
         run: |
-          if (-not (Test-Path "D:")) {
-              Write-Error "Drive D: is not available. Persistence cannot be guaranteed."
-              exit 1
-          }
-
-      # ==========================================
-      # 1. DIRECTORY STRUCTURE INITIALIZATION ON D:
-      # ==========================================
-      - name: "Initialize directory structure on Drive D"
-        shell: powershell
-        run: |
-          $dirs = @(
-              "D:\RDP_Data",
-              "D:\RDP_Data\Projects",
-              "D:\RDP_Data\FirefoxProfile",
-              "D:\RDP_Data\AndroidConfig\.android",
-              "D:\RDP_Data\AndroidConfig\.AndroidStudio",
-              "D:\RDP_Data\AndroidConfig\.gradle"
-          )
-          foreach ($dir in $dirs) {
-              if (-not (Test-Path $dir)) {
-                  New-Item -ItemType Directory -Path $dir -Force
-              }
-          }
+          .\scripts\Initialize-Environment.ps1 -RdpLanguage "en-US"
 
       # ==========================================
       # 2. RESTORATION & SAVING OF CACHES
@@ -75,30 +52,15 @@ jobs:
           restore-keys: rdp-android-studio-
           save-always: true
 
-      # ==========================================
-      # 3. SYSTEM CONFIGURATION & RDP SETTINGS
-      # ==========================================
-      - name: "Configure Core RDP Settings"
+      - name: "Configure RDP"
         shell: powershell
         run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
-
-          netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
-          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389 remoteip=100.64.0.0/10
-
-          Restart-Service -Name TermService -Force
+          .\scripts\Setup-RDP.ps1
 
       - name: "Create RDP User (Neon)"
         shell: powershell
         run: |
-          $securePass = ConvertTo-SecureString "${{ secrets.RDP_PASS }}" -AsPlainText -Force
-          if (-not (Get-LocalUser -Name "Neon" -ErrorAction SilentlyContinue)) {
-              New-LocalUser -Name "Neon" -Password $securePass -AccountNeverExpires
-              Add-LocalGroupMember -Group "Administrators" -Member "Neon"
-              Add-LocalGroupMember -Group "Remote Desktop Users" -Member "Neon"
-          }
+          .\scripts\Manage-User.ps1 -Username "Neon" -Password "${{ secrets.RDP_PASS }}"
 
       # ==========================================
       # 4. INSTALLATION OF DEVELOPMENT TOOLS
@@ -118,21 +80,17 @@ jobs:
           foreach ($pkg in $packages) {
               Write-Host "Installing $pkg..."
               winget install --id $pkg --silent --accept-source-agreements --accept-package-agreements --disable-interactivity -e
+              if ($LASTEXITCODE -ne 0) {
+                  Write-Host "[WARNING] Failed to install $pkg. Winget exited with code $LASTEXITCODE" -ForegroundColor Yellow
+              }
           }
 
       # ==========================================
       # 5. ENVIRONMENT CONFIGURATION & SHORTCUTS
       # ==========================================
-      - name: "Enforce persistent environment structures and desktop shortcuts"
+      - name: "Create desktop shortcuts"
         shell: powershell
         run: |
-          [Environment]::SetEnvironmentVariable("GRADLE_USER_HOME", "D:\RDP_Data\AndroidConfig\.gradle", "Machine")
-          [Environment]::SetEnvironmentVariable("ANDROID_USER_HOME", "D:\RDP_Data\AndroidConfig\.android", "Machine")
-          [Environment]::SetEnvironmentVariable("ANDROID_EMULATOR_HOME", "D:\RDP_Data\AndroidConfig\.android", "Machine")
-          
-          echo "GRADLE_USER_HOME=D:\RDP_Data\AndroidConfig\.gradle" >> $env:GITHUB_ENV
-          echo "ANDROID_USER_HOME=D:\RDP_Data\AndroidConfig\.android" >> $env:GITHUB_ENV
-
           $publicDesktop = "C:\Users\Public\Desktop"
           $WScriptShell = New-Object -ComObject WScript.Shell
 
@@ -149,32 +107,10 @@ jobs:
           $androidShortcut.TargetPath = "C:\Program Files\Android\Android Studio\bin\studio64.exe"
           $androidShortcut.Save()
 
-      # ==========================================
-      # 6. VPN NETWORK (TAILSCALE)
-      # ==========================================
-      - name: "Install Tailscale Engine"
-        shell: powershell
-        run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $installerPath = "$env:TEMP\tailscale.msi"
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-          $process = Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait -PassThru
-          if ($process.ExitCode -ne 0) { exit 1 }
-          Remove-Item $installerPath -Force
-
       - name: "Establish Tailscale Connection"
         shell: powershell
         run: |
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-${{ github.run_id }}
-          $tsIP = $null
-          $retries = 0
-          while (-not $tsIP -and $retries -lt 12) {
-              Start-Sleep -Seconds 5
-              $tsIP = (& "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4).Trim()
-              $retries++
-          }
-          if (-not $tsIP) { exit 1 }
-          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+          .\scripts\Install-Tailscale.ps1 -AuthKey "${{ secrets.TAILSCALE_AUTH_KEY }}" -Hostname "gh-runner-${{ github.run_id }}"
 
       # ==========================================
       # 7. CONNECTION MAINTENANCE & SHUTDOWN DETECTION
@@ -231,20 +167,8 @@ jobs:
               }
           }
 
-      # ==========================================
-      # 8. STRICT CLEANUP (RELEASE CACHE LOCKS)
-      # ==========================================
-      - name: "Kill processes and release file system locks"
+      - name: "Cleanup Environment"
         if: always()
         shell: powershell
         run: |
-          Write-Host "Stopping active background programs to unlock cache runtimes..."
-          Stop-Process -Name "firefox" -Force -ErrorAction SilentlyContinue
-          Stop-Process -Name "Code" -Force -ErrorAction SilentlyContinue
-          Stop-Process -Name "node" -Force -ErrorAction SilentlyContinue
-          Stop-Process -Name "java" -Force -ErrorAction SilentlyContinue
-          Stop-Process -Name "studio64" -Force -ErrorAction SilentlyContinue
-          Stop-Process -Name "adb" -Force -ErrorAction SilentlyContinue
-          
-          Start-Sleep -Seconds 5
-          Write-Host "File locks released successfully. System ready for safe cache tracking."
+          .\scripts\Cleanup.ps1
