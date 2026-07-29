@@ -119,33 +119,15 @@ jobs:
       - name: "Checkout repository"
         uses: actions/checkout@v4
 
-      - name: "Verify Drive D Availability"
+      - name: "Mask sensitive inputs"
         shell: powershell
         run: |
-          if (-not (Test-Path "D:")) {
-              Write-Error "Drive D: is not available. Persistence cannot be guaranteed."
-              exit 1
-          }
+          echo "::add-mask::${{ inputs.rdp_password }}"
 
-      # ==========================================
-      # 1. STRUCTURE INITIALIZATION ON D:
-      # ==========================================
-      - name: "Initialize directory structure on Drive D"
+      - name: "Initialize Environment"
         shell: powershell
         run: |
-          $dirs = @(
-              "D:\RDP_Data",
-              "D:\RDP_Data\Projects",
-              "D:\RDP_Data\FirefoxProfile",
-              "D:\RDP_Data\AndroidConfig\.android",
-              "D:\RDP_Data\AndroidConfig\.AndroidStudio",
-              "D:\RDP_Data\AndroidConfig\.gradle"
-          )
-          foreach ($dir in $dirs) {
-              if (-not (Test-Path $dir)) {
-                  New-Item -ItemType Directory -Path $dir -Force
-              }
-          }
+          .\scripts\Initialize-Environment.ps1 -RdpLanguage "${{ inputs.rdp_language }}"
 
       # ==========================================
       # 2. RESTORATION AND SAVING OF CACHES
@@ -279,110 +261,29 @@ jobs:
                   if (-not [string]::IsNullOrEmpty($app)) {
                       Write-Host "Installing Package: $app" -ForegroundColor Cyan
                       winget install --silent --accept-source-agreements --accept-package-agreements --id $app
+                      if ($LASTEXITCODE -ne 0) {
+                          Write-Host "[WARNING] Failed to install $app. Winget exited with code $LASTEXITCODE" -ForegroundColor Yellow
+                      }
                   }
               }
           } else {
               Write-Host "[WINGET] No custom apps provided. Skipping execution step." -ForegroundColor Yellow
           }
 
-      # ==========================================
-      # 4. RDP SERVER CONFIGURATION
-      # ==========================================
-      - name: "Configure Core RDP Settings"
+      - name: "Configure RDP"
         shell: powershell
         run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+          .\scripts\Setup-RDP.ps1
 
-          netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
-          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389 remoteip=100.64.0.0/10
-
-          Restart-Service -Name TermService -Force
-
-      # ==========================================
-      # 5. SYSTEM LANGUAGE CONFIGURATION
-      # ==========================================
-      - name: "Apply Requested Workspace Language Pack"
+      - name: "Create RDP User"
         shell: powershell
         run: |
-          $lang = "${{ inputs.rdp_language }}"
-          Write-Host "[LANG] Configuring system language to: $lang" -ForegroundColor Cyan
-          
-          Set-WinSystemLocale -SystemLocale $lang
-          Set-WinUserLanguageList -LanguageList $lang -Force
-          
-          if ($lang -eq "fr-FR") {
-              Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Nls\Language" -Name "InstallLanguage" -Value "040c" -Force
-              Set-WinHomeLocation -GeoId 84
-          } elseif ($lang -eq "es-ES") {
-              Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Nls\Language" -Name "InstallLanguage" -Value "0c0a" -Force
-              Set-WinHomeLocation -GeoId 217
-          } else {
-              Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Nls\Language" -Name "InstallLanguage" -Value "0409" -Force
-              Set-WinHomeLocation -GeoId 244
-          }
-          Write-Host "[SUCCESS] Regional and execution policies applied for $lang." -ForegroundColor Green
-
-      - name: "Create RDP User from Inputs"
-        shell: powershell
-        run: |
-          $username = "${{ inputs.rdp_username }}".Trim()
-          $password = "${{ inputs.rdp_password }}".Trim()
-
-          Write-Host "Configuring system user account: $username" -ForegroundColor Cyan
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          
-          if (-not (Get-LocalUser -Name $username -ErrorAction SilentlyContinue)) {
-              New-LocalUser -Name $username -Password $securePass -AccountNeverExpires
-              Add-LocalGroupMember -Group "Administrators" -Member $username
-              Add-LocalGroupMember -Group "Remote Desktop Users" -Member $username
-              Write-Host "[SUCCESS] User account '$username' deployed successfully." -ForegroundColor Green
-          } else {
-              $user = Get-LocalUser -Name $username
-              $user | Set-LocalUser -Password $securePass
-              Write-Host "[SUCCESS] Credentials updated for existing user '$username'." -ForegroundColor Green
-          }
-
-      # ==========================================
-      # 6. PERSISTENT ENVIRONMENT VARIABLES
-      # ==========================================
-      - name: "Enforce persistent environment structures"
-        shell: powershell
-        run: |
-          [Environment]::SetEnvironmentVariable("GRADLE_USER_HOME", "D:\RDP_Data\AndroidConfig\.gradle", "Machine")
-          [Environment]::SetEnvironmentVariable("ANDROID_USER_HOME", "D:\RDP_Data\AndroidConfig\.android", "Machine")
-          [Environment]::SetEnvironmentVariable("ANDROID_EMULATOR_HOME", "D:\RDP_Data\AndroidConfig\.android", "Machine")
-          
-          echo "GRADLE_USER_HOME=D:\RDP_Data\AndroidConfig\.gradle" >> $env:GITHUB_ENV
-          echo "ANDROID_USER_HOME=D:\RDP_Data\AndroidConfig\.android" >> $env:GITHUB_ENV
-
-      # ==========================================
-      # 7. VPN NETWORK ARCHITECTURE (TAILSCALE)
-      # ==========================================
-      - name: "Install Tailscale Engine"
-        shell: powershell
-        run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $installerPath = "$env:TEMP\tailscale.msi"
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-          $process = Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait -PassThru
-          if ($process.ExitCode -ne 0) { exit 1 }
-          Remove-Item $installerPath -Force
+          .\scripts\Manage-User.ps1 -Username "${{ inputs.rdp_username }}" -Password "${{ inputs.rdp_password }}"
 
       - name: "Establish Tailscale Connection"
         shell: powershell
         run: |
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-${{ github.run_id }}
-          $tsIP = $null
-          $retries = 0
-          while (-not $tsIP -and $retries -lt 12) {
-              Start-Sleep -Seconds 5
-              $tsIP = (& "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4).Trim()
-              $retries++
-          }
-          if (-not $tsIP) { exit 1 }
-          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+          .\scripts\Install-Tailscale.ps1 -AuthKey "${{ secrets.TAILSCALE_AUTH_KEY }}" -Hostname "gh-runner-${{ github.run_id }}"
 
       # ==========================================
       # 8. CONNECTION MAINTENANCE AND EXIT SCRIPT
@@ -419,7 +320,7 @@ jobs:
           Write-Host "===============================================" -ForegroundColor Green
           Write-Host "Tailscale IP Address : $env:TAILSCALE_IP" -ForegroundColor Cyan
           Write-Host "Active Username      : ${{ inputs.rdp_username }}" -ForegroundColor Cyan
-          Write-Host "Active Password      : ${{ inputs.rdp_password }}" -ForegroundColor Cyan
+          Write-Host "Active Password      : [REDACTED]" -ForegroundColor Cyan
           Write-Host "Selected UI Language : ${{ inputs.rdp_language }}" -ForegroundColor Cyan
           Write-Host "Allocated Runtime    : $inputMinutes minutes (${{ inputs.rdp_timeout }} requested)" -ForegroundColor Cyan
           Write-Host "Node.js Environment  : v${{ inputs.node_version }}" -ForegroundColor Cyan
@@ -457,18 +358,8 @@ jobs:
       # ==========================================
       # 9. STREAM CLEANUP AND MACHINE SHUTDOWN
       # ==========================================
-      - name: "Kill processes and release file system locks"
+      - name: "Cleanup Environment"
         if: always()
         shell: powershell
         run: |
-          Write-Host "Stopping active background programs to unlock cache runtimes..."
-          Stop-Process -Name "sshd" -Force -ErrorAction SilentlyContinue
-          Stop-Process -Name "firefox" -Force -ErrorAction SilentlyContinue
-          Stop-Process -Name "Code" -Force -ErrorAction SilentlyContinue
-          Stop-Process -Name "node" -Force -ErrorAction SilentlyContinue
-          Stop-Process -Name "java" -Force -ErrorAction SilentlyContinue
-          Stop-Process -Name "studio64" -Force -ErrorAction SilentlyContinue
-          Stop-Process -Name "adb" -Force -ErrorAction SilentlyContinue
-          
-          Start-Sleep -Seconds 5
-          Write-Host "File locks released successfully. System ready for safe cache tracking."
+          .\scripts\Cleanup.ps1
