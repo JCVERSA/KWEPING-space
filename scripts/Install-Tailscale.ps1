@@ -39,8 +39,9 @@ if ($AuthKey) {
     }
 
     Write-Host "Tailscale IP: $tsIP" -ForegroundColor Green
-    # Output to GitHub Env if running in GitHub Actions
+    # Output to GitHub Env if running in GitHub Actions using robust UTF-8/No-BOM method
     if ($env:GITHUB_ENV) {
-        "TAILSCALE_IP=$tsIP" | Out-File -FilePath $env:GITHUB_ENV -Append
+        [System.IO.File]::AppendAllLines($env:GITHUB_ENV, [string[]]@("TAILSCALE_IP=$tsIP"))
+        Write-Host "[INFO] Appended TAILSCALE_IP to GITHUB_ENV." -ForegroundColor Cyan
     }
 }
