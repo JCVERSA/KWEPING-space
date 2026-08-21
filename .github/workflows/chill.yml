@@ -280,6 +280,11 @@ jobs:
         run: |
           .\scripts\Manage-User.ps1 -Username "${{ inputs.rdp_username }}" -Password "${{ inputs.rdp_password }}"
 
+      - name: "Set Custom Wallpapers"
+        shell: powershell
+        run: |
+          .\scripts\Set-Wallpaper.ps1
+
       - name: "Establish Tailscale Connection"
         shell: powershell
         run: |
