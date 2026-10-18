@@ -23,7 +23,13 @@ jobs:
       - name: Run PSScriptAnalyzer
         shell: powershell
         run: |
-          $results = Invoke-ScriptAnalyzer -Path .\scripts -Recurse -Severity Error,Warning
+          # PSAvoidUsingWriteHost is excluded: these scripts target PowerShell 5.1+
+          # on windows-2025 runners, where Write-Host writes to the Information
+          # stream (fully redirectable/suppressible) and is the only native cmdlet
+          # that supports -ForegroundColor for colored GitHub Actions log output.
+          $results = Invoke-ScriptAnalyzer -Path .\scripts -Recurse `
+              -Severity Error,Warning `
+              -ExcludeRule PSAvoidUsingWriteHost
           if ($results) {
               $results | Format-Table -AutoSize
               exit 1
