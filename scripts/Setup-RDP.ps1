@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 
 Write-Host "--- Configuring RDP ---" -ForegroundColor Cyan
 

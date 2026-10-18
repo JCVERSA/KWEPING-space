@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Continue'
+﻿$ErrorActionPreference = 'Continue'
 
 Write-Host "--- Cleaning up processes and releasing file locks ---" -ForegroundColor Cyan
 

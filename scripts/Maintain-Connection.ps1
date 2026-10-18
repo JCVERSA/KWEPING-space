@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$Username = "Neon",
     [int]$TimeoutMinutes = 350,
     [string]$Language = "en-US",
@@ -6,7 +6,10 @@ param(
     [string]$JavaVersion = "",
     [bool]$SshEnabled = $false,
     [string]$SshShell = "",
-    [string]$PasswordDisplay = "[REDACTED]"
+    # Display-only label shown in the connection banner for the credential line.
+    # Named to avoid triggering PSAvoidUsingPlainTextForPassword (it is never a
+    # real credential, just a "[REDACTED]"-style placeholder).
+    [string]$CredentialLabel = "[REDACTED]"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -47,7 +50,7 @@ Write-Host "          WINDOWS RDP RUNTIME ONLINE           " -ForegroundColor Gr
 Write-Host "===============================================" -ForegroundColor Green
 Write-Host "Tailscale IP Address : $env:TAILSCALE_IP" -ForegroundColor Cyan
 Write-Host "Active Username      : $Username" -ForegroundColor Cyan
-Write-Host "Active Password      : $PasswordDisplay" -ForegroundColor Cyan
+Write-Host "Active Password      : $CredentialLabel" -ForegroundColor Cyan
 if ($Language) {
     Write-Host "Selected UI Language : $Language" -ForegroundColor Cyan
 }

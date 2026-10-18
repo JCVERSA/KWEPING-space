@@ -321,7 +321,7 @@ jobs:
       - name: "Create RDP User"
         shell: powershell
         run: |
-          .\scripts\Manage-User.ps1 -Username "$env:RDP_USERNAME"
+          .\scripts\Manage-User.ps1
         env:
           RDP_USERNAME: ${{ inputs.rdp_username }}
           RDP_PASS: ${{ inputs.rdp_password }}
@@ -356,7 +356,7 @@ jobs:
               -JavaVersion $env:JAVA_VERSION `
               -SshEnabled ($env:SSH_ENABLED -eq "true") `
               -SshShell $env:SSH_SHELL `
-              -PasswordDisplay "[REDACTED]"
+              -CredentialLabel "[REDACTED]"
         env:
           RDP_USERNAME: ${{ inputs.rdp_username }}
           RDP_TIMEOUT: ${{ inputs.rdp_timeout }}

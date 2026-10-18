@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$AuthKey,
     [string]$Hostname,
     [string]$Version = "1.82.0",

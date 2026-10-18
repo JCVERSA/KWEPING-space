@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$RdpLanguage = "en-US"
 )
 

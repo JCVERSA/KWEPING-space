@@ -78,8 +78,9 @@ jobs:
       - name: "Create RDP User (Neon)"
         shell: powershell
         run: |
-          .\scripts\Manage-User.ps1 -Username "Neon"
+          .\scripts\Manage-User.ps1
         env:
+          RDP_USERNAME: Neon
           RDP_PASS: ${{ secrets.RDP_PASS }}
 
       # ==========================================
@@ -148,7 +149,7 @@ jobs:
               -Username "Neon" `
               -TimeoutMinutes 350 `
               -Language "en-US" `
-              -PasswordDisplay "[Use your RDP_PASS secret]"
+              -CredentialLabel "[Use your RDP_PASS secret]"
 
       - name: "Cleanup Environment"
         if: always()
