@@ -1,0 +1,85 @@
+name: Lint & Static Analysis
+
+on:
+  push:
+    branches: [main, master, 'arena/**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  powershell-lint:
+    name: PSScriptAnalyzer (PowerShell)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PSScriptAnalyzer
+        shell: powershell
+        run: |
+          Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser -AllowClobber
+
+      - name: Run PSScriptAnalyzer
+        shell: powershell
+        run: |
+          $results = Invoke-ScriptAnalyzer -Path .\scripts -Recurse -Severity Error,Warning
+          if ($results) {
+              $results | Format-Table -AutoSize
+              exit 1
+          }
+          Write-Host "PSScriptAnalyzer: no errors or warnings." -ForegroundColor Green
+
+      - name: Parse-check all scripts
+        shell: powershell
+        run: |
+          $failed = $false
+          Get-ChildItem -Path .\scripts -Filter *.ps1 -Recurse | ForEach-Object {
+              $errors = @()
+              [System.Management.Automation.Language.Parser]::ParseFile(
+                  $_.FullName,
+                  [ref]$null,
+                  [ref]$errors
+              ) | Out-Null
+              if ($errors.Count -gt 0) {
+                  Write-Host ("[FAIL] " + $_.Name) -ForegroundColor Red
+                  $errors | ForEach-Object { Write-Host ("  " + $_.Message) -ForegroundColor Red }
+                  $failed = $true
+              } else {
+                  Write-Host ("[ OK ] " + $_.Name) -ForegroundColor Green
+              }
+          }
+          if ($failed) { exit 1 }
+
+  yaml-lint:
+    name: YAML Parse Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Run yamllint on workflows
+        run: yamllint .github/workflows/ scripts/ || true
+
+      - name: Validate YAML parses cleanly
+        run: |
+          python - <<'PY'
+          import sys, glob, yaml
+          failed = False
+          for path in glob.glob('.github/workflows/*.yml') + glob.glob('.github/workflows/*.yaml'):
+              try:
+                  with open(path, 'r', encoding='utf-8') as f:
+                      yaml.safe_load(f)
+                  print(f"[ OK ] {path}")
+              except yaml.YAMLError as e:
+                  print(f"[FAIL] {path}: {e}")
+                  failed = True
+          sys.exit(1 if failed else 0)
+          PY

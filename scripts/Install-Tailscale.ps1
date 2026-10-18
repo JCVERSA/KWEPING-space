@@ -1,17 +1,46 @@
 param(
     [string]$AuthKey,
-    [string]$Hostname
+    [string]$Hostname,
+    [string]$Version = "1.82.0",
+    [string]$ExpectedSha256 = ""
 )
 
 $ErrorActionPreference = 'Stop'
 
-Write-Host "--- Installing Tailscale ---" -ForegroundColor Cyan
+Write-Host "--- Installing Tailscale v$Version ---" -ForegroundColor Cyan
 
-$tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-$installerPath = "$env:TEMP\tailscale.msi"
+# Allow credentials to come from environment variables so they are not
+# interpolated into the workflow YAML source / PowerShell command line.
+if ([string]::IsNullOrEmpty($AuthKey) -and -not [string]::IsNullOrEmpty($env:TAILSCALE_AUTH_KEY)) {
+    $AuthKey = $env:TAILSCALE_AUTH_KEY
+}
+if ([string]::IsNullOrEmpty($Hostname) -and -not [string]::IsNullOrEmpty($env:TAILSCALE_HOSTNAME)) {
+    $Hostname = $env:TAILSCALE_HOSTNAME
+}
 
-Write-Host "Downloading Tailscale..."
+$tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-$Version-amd64.msi"
+$installerPath = Join-Path $env:TEMP "tailscale-$Version.msi"
+
+Write-Host "Downloading Tailscale from $tsUrl ..."
 Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+
+# Integrity check (optional but recommended): if ExpectedSha256 is provided,
+# verify the MSI matches before running msiexec. This guards against a
+# compromised CDN or a silently replaced download.
+if (-not [string]::IsNullOrEmpty($ExpectedSha256)) {
+    $actualHash = (Get-FileHash -Path $installerPath -Algorithm SHA256).Hash
+    if ($actualHash -ne $ExpectedSha256) {
+        Write-Host "[ERROR] Tailscale MSI hash mismatch." -ForegroundColor Red
+        Write-Host "  Expected: $ExpectedSha256" -ForegroundColor Red
+        Write-Host "  Actual  : $actualHash" -ForegroundColor Red
+        Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
+        exit 1
+    }
+    Write-Host "[VERIFIED] Tailscale MSI SHA-256 matches expected value." -ForegroundColor Green
+}
+else {
+    Write-Host "[WARNING] No ExpectedSha256 provided; skipping MSI integrity verification." -ForegroundColor Yellow
+}
 
 Write-Host "Installing Tailscale MSI..."
 $process = Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait -PassThru
@@ -19,7 +48,7 @@ if ($process.ExitCode -ne 0) {
     Write-Host "[ERROR] Tailscale installation failed with exit code $($process.ExitCode)" -ForegroundColor Red
     exit 1
 }
-Remove-Item $installerPath -Force
+Remove-Item $installerPath -Force -ErrorAction SilentlyContinue
 
 if ($AuthKey) {
     Write-Host "Establishing Tailscale Connection..."

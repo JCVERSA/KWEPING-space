@@ -7,6 +7,23 @@ $ErrorActionPreference = 'Stop'
 
 Write-Host "--- Managing RDP User: $Username ---" -ForegroundColor Cyan
 
+# Allow callers to pass the password via the RDP_PASS environment variable to
+# avoid embedding secrets in the PowerShell command line (where they can be
+# captured by process listings / ETW / transcript logs).
+if ([string]::IsNullOrEmpty($Password) -and -not [string]::IsNullOrEmpty($env:RDP_PASS)) {
+    $Password = $env:RDP_PASS
+}
+
+if ([string]::IsNullOrEmpty($Password)) {
+    Write-Host "[ERROR] No password supplied: pass -Password or set RDP_PASS environment variable." -ForegroundColor Red
+    exit 1
+}
+
+if ([string]::IsNullOrEmpty($Username)) {
+    Write-Host "[ERROR] Username is required." -ForegroundColor Red
+    exit 1
+}
+
 $securePass = ConvertTo-SecureString $Password -AsPlainText -Force
 
 try {
@@ -24,9 +41,9 @@ try {
     }
 }
 catch {
-    Write-Host "[WARNING] Failed to deploy/update user account '$Username'. Error: $_" -ForegroundColor Yellow
+    Write-Host "[ERROR] Failed to deploy/update user account '$Username'. Error: $_" -ForegroundColor Red
     if ($_.Exception -and $_.Exception.GetType().Name -eq "InvalidPasswordException") {
-        Write-Host "[WARNING] This is likely due to the password not meeting Windows Server complexity requirements." -ForegroundColor Yellow
+        Write-Host "[ERROR] This is likely due to the password not meeting Windows Server complexity requirements." -ForegroundColor Red
     }
-    # We do not rethrow or exit with error to maintain backwards compatibility with the original workflow behavior
+    exit 1
 }

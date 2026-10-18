@@ -91,13 +91,13 @@ on:
       # BULK LOADING ZONE (50+ APPS)
       # ==========================================
       custom_winget_apps:
-        description: "List of Apps to deploy via Winget (Leave empty to install nothing)"
+        description: "List of Apps to deploy via Winget, separated by spaces (Leave empty to install nothing)"
         required: false
         type: string
         default: ""
 
 # ========================================================
-# 🔒 INFRASTRUCTURE SECURITY: STRICT PERMISSIONS RETAINED
+# 🔒 INFRASTRUCTURE SECURITY: LEAST-PRIVILEGE PERMISSIONS
 # ========================================================
 permissions:
   contents: read   # The server can read the code but cannot modify anything on your GitHub
@@ -105,13 +105,13 @@ permissions:
 
 jobs:
   secure-rdp:
-    # 🔒 REPOSITORY LOCK: The workflow will strictly refuse to run on a third-party fork
+    # 🔒 REPOSITORY LOCK: Refuse to run on third-party forks
     if: github.repository == 'JCVERSA/KWEPING-space'
     runs-on: windows-2025
-    
-    # 🔒 APPROVAL LOCK: Requires mandatory manual approval and links access to the environment secret
+
+    # 🔒 APPROVAL LOCK: Requires manual approval via the Production environment
     environment: Production
-    
+
     # Strict dynamic allocation limit
     timeout-minutes: 360
 
@@ -122,12 +122,19 @@ jobs:
       - name: "Mask sensitive inputs"
         shell: powershell
         run: |
-          echo "::add-mask::${{ inputs.rdp_password }}"
+          # Mask credentials in logs. The password is passed via env (not interpolated
+          # into the PowerShell source) so that PowerShell metacharacters such as $, ", `,
+          # and \ cannot cause injection or parsing failures.
+          if ($env:RDP_PASS) { echo "::add-mask::$env:RDP_PASS" }
+        env:
+          RDP_PASS: ${{ inputs.rdp_password }}
 
       - name: "Initialize Environment"
         shell: powershell
         run: |
-          .\scripts\Initialize-Environment.ps1 -RdpLanguage "${{ inputs.rdp_language }}"
+          .\scripts\Initialize-Environment.ps1 -RdpLanguage "$env:RDP_LANG"
+        env:
+          RDP_LANG: ${{ inputs.rdp_language }}
 
       # ==========================================
       # 2. RESTORATION AND SAVING OF CACHES
@@ -138,6 +145,7 @@ jobs:
           path: D:\RDP_Data\Projects
           key: rdp-projects-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: rdp-projects-
+          save-always: true
 
       - name: "Cache 2: Persistent Firefox Profile"
         uses: actions/cache@v4
@@ -145,6 +153,7 @@ jobs:
           path: D:\RDP_Data\FirefoxProfile
           key: rdp-firefox-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: rdp-firefox-
+          save-always: true
 
       - name: "Cache 3: Android Gradle Dependencies"
         uses: actions/cache@v4
@@ -152,6 +161,7 @@ jobs:
           path: D:\RDP_Data\AndroidConfig\.gradle
           key: rdp-gradle-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: rdp-gradle-
+          save-always: true
 
       - name: "Cache 4: Android Studio Config & SDK"
         uses: actions/cache@v4
@@ -159,6 +169,7 @@ jobs:
           path: D:\RDP_Data\AndroidConfig
           key: rdp-android-studio-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: rdp-android-studio-
+          save-always: true
 
       # ==========================================
       # 3. RUNTIME DEPLOYMENT (NODE & JAVA)
@@ -178,38 +189,37 @@ jobs:
       # 3.4 SSH / SFTP SERVER DEPLOYMENT
       # ==========================================
       - name: "Provision OpenSSH & SFTP Server Engine"
+        if: ${{ inputs.install_ssh_sftp == true }}
         shell: powershell
         run: |
-          if ("${{ inputs.install_ssh_sftp }}" -eq "true") {
-              Write-Host "[SSH] Installing native OpenSSH Server feature..." -ForegroundColor Cyan
-              Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
-              
-              Write-Host "[SSH] Configuring and starting sshd services..." -ForegroundColor Cyan
-              Start-Service sshd
-              Set-Service -Name sshd -StartupType 'Automatic'
-              
-              # Port 22 open only for Tailscale IP range (Zero Trust Security)
-              Write-Host "[SSH] Securing firewall rules for Tailscale ecosystem..." -ForegroundColor Cyan
-              netsh advfirewall firewall delete rule name="OpenSSH-Server-In-TCP" 2>$null
-              netsh advfirewall firewall add rule name="SSH-SFTP-Tailscale" dir=in action=allow protocol=TCP localport=22 remoteip=100.64.0.0/10
+          Write-Host "[SSH] Installing native OpenSSH Server feature..." -ForegroundColor Cyan
+          Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
 
-              # Configuring default shell
-              $shellChoice = "${{ inputs.ssh_shell }}"
-              Write-Host "[SSH] Configuring default shell to: $shellChoice" -ForegroundColor Cyan
+          Write-Host "[SSH] Configuring and starting sshd services..." -ForegroundColor Cyan
+          Start-Service sshd
+          Set-Service -Name sshd -StartupType 'Automatic'
 
-              $shellExe = if ($shellChoice -eq "powershell") { "powershell.exe" } else { "cmd.exe" }
-              $shellPath = (Get-Command $shellExe).Source
+          # Port 22 open only for Tailscale IP range (Zero Trust Security)
+          Write-Host "[SSH] Securing firewall rules for Tailscale ecosystem..." -ForegroundColor Cyan
+          netsh advfirewall firewall delete rule name="SSH-SFTP-Tailscale" 2>$null
+          netsh advfirewall firewall add rule name="SSH-SFTP-Tailscale" dir=in action=allow protocol=TCP localport=22 remoteip=100.64.0.0/10
 
-              if (-not (Test-Path "HKLM:\SOFTWARE\OpenSSH")) {
-                  New-Item -Path "HKLM:\SOFTWARE\OpenSSH" -Force | Out-Null
-              }
-              New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name "DefaultShell" -Value $shellPath -PropertyType String -Force
-              Restart-Service sshd -Force
-              
-              Write-Host "[SUCCESS] OpenSSH and SFTP endpoint is ready on port 22." -ForegroundColor Green
-          } else {
-              Write-Host "[SSH] OpenSSH installation bypassed." -ForegroundColor Yellow
+          # Configuring default shell
+          $shellChoice = $env:SSH_SHELL
+          Write-Host "[SSH] Configuring default shell to: $shellChoice" -ForegroundColor Cyan
+
+          $shellExe = if ($shellChoice -eq "powershell") { "powershell.exe" } else { "cmd.exe" }
+          $shellPath = (Get-Command $shellExe).Source
+
+          if (-not (Test-Path "HKLM:\SOFTWARE\OpenSSH")) {
+              New-Item -Path "HKLM:\SOFTWARE\OpenSSH" -Force | Out-Null
           }
+          New-ItemProperty -Path "HKLM:\SOFTWARE\OpenSSH" -Name "DefaultShell" -Value $shellPath -PropertyType String -Force
+          Restart-Service sshd -Force
+
+          Write-Host "[SUCCESS] OpenSSH and SFTP endpoint is ready on port 22." -ForegroundColor Green
+        env:
+          SSH_SHELL: ${{ inputs.ssh_shell }}
 
       # ==========================================
       # 3.5 CUSTOM ARCHITECT TOOLS DEPLOYMENT
@@ -217,35 +227,65 @@ jobs:
       - name: "Provision Custom Architect Tools"
         shell: powershell
         run: |
-          # 1. Custom Claude Code Installation
-          if ("${{ inputs.install_claude_code }}" -eq "true") {
-              Write-Host "[INSTALL] Deploying Free Claude Code..." -ForegroundColor Cyan
-              irm "https://github.com/Alishahryar1/free-claude-code/blob/main/scripts/install.ps1?raw=1" | iex
+          $ErrorActionPreference = 'Continue'
+
+          # 1. Custom Claude Code Installation (pinned by commit SHA for supply-chain safety).
+          if ($env:INSTALL_CLAUDE -eq "true") {
+              Write-Host "[INSTALL] Deploying Claude Code CLI (pinned commit)..." -ForegroundColor Cyan
+              # NOTE: If you wish to pin by SHA-256, compute the file hash of the pinned
+              # script and pass it via -ExpectedSha256 to Invoke-RemoteScript.ps1.
+              & .\scripts\Invoke-RemoteScript.ps1 `
+                  -Uri "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/261b12f96499e46a7f66bc596e22968bf0f3372f/scripts/install.ps1" `
+                  -Description "free-claude-code installer (pinned SHA)"
           }
 
           # 2. ghgrab installation via pipx
-          if ("${{ inputs.install_ghgrab }}" -eq "true") {
+          if ($env:INSTALL_GHGRAB -eq "true") {
               Write-Host "[INSTALL] Deploying ghgrab via pipx..." -ForegroundColor Cyan
+              if (-not (Get-Command pipx -ErrorAction SilentlyContinue)) {
+                  Write-Host "[INFO] pipx not found on PATH; bootstrapping via python -m pip." -ForegroundColor Cyan
+                  python -m pip install --user pipx
+                  python -m pipx ensurepath
+                  # Refresh PATH for this session
+                  $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+              }
               pipx install ghgrab
           }
 
           # 3. Ollama Installation
-          if ("${{ inputs.install_ollama }}" -eq "true") {
+          if ($env:INSTALL_OLLAMA -eq "true") {
               Write-Host "[INSTALL] Deploying Ollama Local Engine..." -ForegroundColor Cyan
-              irm https://ollama.com/install.ps1 | iex
+              # Download-then-execute instead of irm | iex; same supply-chain caveat applies,
+              # but avoids directly piping the network stream into Invoke-Expression.
+              & .\scripts\Invoke-RemoteScript.ps1 `
+                  -Uri "https://ollama.com/install.ps1" `
+                  -Description "Ollama installer (upstream latest)"
           }
 
           # 4. PHP Environment Deployment
-          if ("${{ inputs.install_php }}" -eq "true") {
+          if ($env:INSTALL_PHP -eq "true") {
               Write-Host "[INSTALL] Deploying PHP Environment..." -ForegroundColor Cyan
               winget install --silent --accept-source-agreements --accept-package-agreements PHP.PHP
           }
 
           # 5. Docker Desktop Installation
-          if ("${{ inputs.install_docker }}" -eq "true") {
+          if ($env:INSTALL_DOCKER -eq "true") {
               Write-Host "[INSTALL] Deploying Docker Desktop Infrastructure..." -ForegroundColor Cyan
               winget install --silent --accept-source-agreements --accept-package-agreements Docker.DockerDesktop
+              Write-Host "[VERIFY] Checking Docker CLI availability..." -ForegroundColor Cyan
+              $dockerBin = Get-Command docker -ErrorAction SilentlyContinue
+              if ($dockerBin) {
+                  Write-Host "[INFO] docker CLI installed at: $($dockerBin.Source)" -ForegroundColor Green
+              } else {
+                  Write-Host "[WARNING] Docker CLI not on PATH after install; Docker Desktop may require a reboot / WSL2 enablement on hosted runners." -ForegroundColor Yellow
+              }
           }
+        env:
+          INSTALL_CLAUDE: ${{ inputs.install_claude_code }}
+          INSTALL_GHGRAB: ${{ inputs.install_ghgrab }}
+          INSTALL_OLLAMA: ${{ inputs.install_ollama }}
+          INSTALL_PHP: ${{ inputs.install_php }}
+          INSTALL_DOCKER: ${{ inputs.install_docker }}
 
       # ==========================================
       # 3.6 BULK DEPLOYMENT (WINGET)
@@ -253,9 +293,10 @@ jobs:
       - name: "Bulk Applications Delivery"
         shell: powershell
         run: |
-          $appsString = "${{ inputs.custom_winget_apps }}".Trim()
+          winget source update --disable-interactivity
+          $appsString = $env:WINGET_APPS.Trim()
           if (-not [string]::IsNullOrEmpty($appsString)) {
-              $apps = $appsString -split " "
+              $apps = $appsString -split "\s+"
               Write-Host "[WINGET] Bulk execution triggered for $($apps.Count) applications." -ForegroundColor Cyan
               foreach ($app in $apps) {
                   if (-not [string]::IsNullOrEmpty($app)) {
@@ -269,6 +310,8 @@ jobs:
           } else {
               Write-Host "[WINGET] No custom apps provided. Skipping execution step." -ForegroundColor Yellow
           }
+        env:
+          WINGET_APPS: ${{ inputs.custom_winget_apps }}
 
       - name: "Configure RDP"
         shell: powershell
@@ -278,12 +321,24 @@ jobs:
       - name: "Create RDP User"
         shell: powershell
         run: |
-          .\scripts\Manage-User.ps1 -Username "${{ inputs.rdp_username }}" -Password "${{ inputs.rdp_password }}"
+          .\scripts\Manage-User.ps1 -Username "$env:RDP_USERNAME"
+        env:
+          RDP_USERNAME: ${{ inputs.rdp_username }}
+          RDP_PASS: ${{ inputs.rdp_password }}
 
       - name: "Establish Tailscale Connection"
         shell: powershell
         run: |
-          .\scripts\Install-Tailscale.ps1 -AuthKey "${{ secrets.TAILSCALE_AUTH_KEY }}" -Hostname "gh-runner-${{ github.run_id }}"
+          # ExpectedSha256 is intentionally left empty until an operator pins the
+          # SHA-256 of tailscale-setup-1.82.0-amd64.msi; the script will log a
+          # warning and proceed. Populate -ExpectedSha256 to enable hard-fail
+          # integrity verification.
+          # AuthKey and Hostname are provided via env vars (TAILSCALE_AUTH_KEY,
+          # TAILSCALE_HOSTNAME) so the secret never appears in the command line.
+          .\scripts\Install-Tailscale.ps1 -Version "1.82.0"
+        env:
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          TAILSCALE_HOSTNAME: gh-runner-${{ github.run_id }}
 
       # ==========================================
       # 8. CONNECTION MAINTENANCE AND EXIT SCRIPT
@@ -291,69 +346,25 @@ jobs:
       - name: "Maintain Connection Loop"
         shell: powershell
         run: |
-          $publicDesktop = "C:\Users\Public\Desktop"
-          $shortcutPath = "$publicDesktop\Save_and_Exit.bat"
-          $scriptContent = @"
-          @echo off
-          echo ===================================================
-          echo    SAVING YOUR PROJECTS AND CLOSING WORKSPACE RDP
-          echo ===================================================
-          echo.
-          echo Transmitting stop notification flag to GitHub...
-          echo stop > D:\RDP_Data\stop.txt
-          echo.
-          echo You can now safely close this Remote Desktop window.
-          echo GitHub Actions will finalize cache commit operations.
-          echo.
-          pause
-          "@
-          Set-Content -Path $shortcutPath -Value $scriptContent -Force
-
-          # Dynamic timeout calculation
-          [int]$inputMinutes = ${{ inputs.rdp_timeout }}
-          if ($inputMinutes -gt 350 -or $inputMinutes -le 0) { $inputMinutes = 350 }
-          $maxSeconds = $inputMinutes * 60
-          $elapsed = 0
-
-          Write-Host "`n===============================================" -ForegroundColor Green
-          Write-Host "          WINDOWS RDP RUNTIME ONLINE           " -ForegroundColor Green
-          Write-Host "===============================================" -ForegroundColor Green
-          Write-Host "Tailscale IP Address : $env:TAILSCALE_IP" -ForegroundColor Cyan
-          Write-Host "Active Username      : ${{ inputs.rdp_username }}" -ForegroundColor Cyan
-          Write-Host "Active Password      : [REDACTED]" -ForegroundColor Cyan
-          Write-Host "Selected UI Language : ${{ inputs.rdp_language }}" -ForegroundColor Cyan
-          Write-Host "Allocated Runtime    : $inputMinutes minutes (${{ inputs.rdp_timeout }} requested)" -ForegroundColor Cyan
-          Write-Host "Node.js Environment  : v${{ inputs.node_version }}" -ForegroundColor Cyan
-          Write-Host "Java Development Kit : v${{ inputs.java_version }}" -ForegroundColor Cyan
-          
-          if ("${{ inputs.install_ssh_sftp }}" -eq "true") {
-              Write-Host "SSH/SFTP Server      : $((Get-Service sshd).Status) (Shell: ${{ inputs.ssh_shell }})" -ForegroundColor Green
-          } else {
-              Write-Host "SSH/SFTP Server      : DISABLED" -ForegroundColor Yellow
-          }
-          
-          Write-Host "-----------------------------------------------"
-          Write-Host "⚠️  CRITICAL FOR PERSISTENCE MAPS: ⚠️" -ForegroundColor Red
-          Write-Host "When your work session is finished, execute the" -ForegroundColor Yellow
-          Write-Host "  'Save_and_Exit' script shortcut found directly" -ForegroundColor Yellow
-          Write-Host "  on your cloud instance Windows Desktop interface!" -ForegroundColor Yellow
-          Write-Host "==============================================="`n
-          
-          if (Test-Path "D:\RDP_Data\stop.txt") { Remove-Item "D:\RDP_Data\stop.txt" -Force }
-
-          while ($elapsed -lt $maxSeconds) {
-              if (Test-Path "D:\RDP_Data\stop.txt") {
-                  Remove-Item "D:\RDP_Data\stop.txt" -Force
-                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Shutdown trigger caught! Initializing unmount procedures..." -ForegroundColor Green
-                  break
-              }
-              Start-Sleep -Seconds 10
-              $elapsed += 10
-              if (($elapsed % 300) -eq 0) {
-                  $timeLeft = [Math]::Round(($maxSeconds - $elapsed) / 60, 1)
-                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP/SSH pipeline active. Approximately $timeLeft minutes remaining."
-              }
-          }
+          $timeoutMinutes = 0
+          if (-not [int]::TryParse($env:RDP_TIMEOUT, [ref]$timeoutMinutes)) { $timeoutMinutes = 350 }
+          .\scripts\Maintain-Connection.ps1 `
+              -Username $env:RDP_USERNAME `
+              -TimeoutMinutes $timeoutMinutes `
+              -Language $env:RDP_LANG `
+              -NodeVersion $env:NODE_VERSION `
+              -JavaVersion $env:JAVA_VERSION `
+              -SshEnabled ($env:SSH_ENABLED -eq "true") `
+              -SshShell $env:SSH_SHELL `
+              -PasswordDisplay "[REDACTED]"
+        env:
+          RDP_USERNAME: ${{ inputs.rdp_username }}
+          RDP_TIMEOUT: ${{ inputs.rdp_timeout }}
+          RDP_LANG: ${{ inputs.rdp_language }}
+          NODE_VERSION: ${{ inputs.node_version }}
+          JAVA_VERSION: ${{ inputs.java_version }}
+          SSH_ENABLED: ${{ inputs.install_ssh_sftp }}
+          SSH_SHELL: ${{ inputs.ssh_shell }}
 
       # ==========================================
       # 9. STREAM CLEANUP AND MACHINE SHUTDOWN

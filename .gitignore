@@ -1,0 +1,27 @@
+# Editor / OS artifacts
+*.ps1.bak
+*.psm1.bak
+*.bak
+*.tmp
+*.log
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# PowerShell
+*.psess
+*.vspx
+
+# Git
+*.orig
+
+# Local test outputs
+/test-output/
+/tmp/
+
+# Common IDEs
+.vs/
+.vscode/
+.idea/
+*.swp
+*~

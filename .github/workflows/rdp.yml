@@ -3,14 +3,32 @@ name: RDP-Development-Environment
 on:
   workflow_dispatch:
 
+# 🔒 LEAST-PRIVILEGE PERMISSIONS (mirror chill.yml)
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   secure-rdp:
+    # 🔒 REPOSITORY LOCK: Refuse to run on third-party forks
+    if: github.repository == 'JCVERSA/KWEPING-space'
     runs-on: windows-2025
+
+    # 🔒 APPROVAL LOCK
+    environment: Production
+
     timeout-minutes: 360
 
     steps:
       - name: "Checkout repository"
         uses: actions/checkout@v4
+
+      - name: "Mask sensitive inputs"
+        shell: powershell
+        run: |
+          if ($env:RDP_PASS) { echo "::add-mask::$env:RDP_PASS" }
+        env:
+          RDP_PASS: ${{ secrets.RDP_PASS }}
 
       - name: "Initialize Environment"
         shell: powershell
@@ -60,7 +78,9 @@ jobs:
       - name: "Create RDP User (Neon)"
         shell: powershell
         run: |
-          .\scripts\Manage-User.ps1 -Username "Neon" -Password "${{ secrets.RDP_PASS }}"
+          .\scripts\Manage-User.ps1 -Username "Neon"
+        env:
+          RDP_PASS: ${{ secrets.RDP_PASS }}
 
       # ==========================================
       # 4. INSTALLATION OF DEVELOPMENT TOOLS
@@ -110,7 +130,13 @@ jobs:
       - name: "Establish Tailscale Connection"
         shell: powershell
         run: |
-          .\scripts\Install-Tailscale.ps1 -AuthKey "${{ secrets.TAILSCALE_AUTH_KEY }}" -Hostname "gh-runner-${{ github.run_id }}"
+          # ExpectedSha256 intentionally left blank; see comment in chill.yml.
+          # AuthKey and Hostname are provided via env vars so the secret never
+          # appears in the PowerShell command line.
+          .\scripts\Install-Tailscale.ps1 -Version "1.82.0"
+        env:
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          TAILSCALE_HOSTNAME: gh-runner-${{ github.run_id }}
 
       # ==========================================
       # 7. CONNECTION MAINTENANCE & SHUTDOWN DETECTION
@@ -118,54 +144,11 @@ jobs:
       - name: "Maintain Connection Loop"
         shell: powershell
         run: |
-          $publicDesktop = "C:\Users\Public\Desktop"
-          $shortcutPath = "$publicDesktop\Save_and_Exit.bat"
-          $scriptContent = @"
-          @echo off
-          echo ===================================================
-          echo    SAVING YOUR PROJECTS AND CLOSING WORKSPACE RDP
-          echo ===================================================
-          echo.
-          echo Transmitting stop notification flag to GitHub...
-          echo stop > D:\RDP_Data\stop.txt
-          echo.
-          echo You can now safely close this Remote Desktop window.
-          echo GitHub Actions will finalize cache commit operations.
-          echo.
-          pause
-          "@
-          Set-Content -Path $shortcutPath -Value $scriptContent -Force
-
-          Write-Host "`n===============================================" -ForegroundColor Green
-          Write-Host "          WINDOWS RDP RUNTIME ONLINE           " -ForegroundColor Green
-          Write-Host "===============================================" -ForegroundColor Green
-          Write-Host "Tailscale IP Address : $env:TAILSCALE_IP" -ForegroundColor Cyan
-          Write-Host "Active Username      : Neon" -ForegroundColor Cyan
-          Write-Host "Active Password      : [Use your RDP_PASS secret]" -ForegroundColor Cyan
-          Write-Host "-----------------------------------------------"
-          Write-Host "⚠️  CRITICAL FOR PERSISTENCE MAPS: ⚠️" -ForegroundColor Red
-          Write-Host "When your work session is finished, execute the" -ForegroundColor Yellow
-          Write-Host "  'Save_and_Exit' script shortcut found directly" -ForegroundColor Yellow
-          Write-Host "  on your cloud instance Windows Desktop interface!" -ForegroundColor Yellow
-          Write-Host "==============================================="`n
-
-          $maxSeconds = 21000
-          $elapsed = 0
-          
-          if (Test-Path "D:\RDP_Data\stop.txt") { Remove-Item "D:\RDP_Data\stop.txt" -Force }
-
-          while ($elapsed -lt $maxSeconds) {
-              if (Test-Path "D:\RDP_Data\stop.txt") {
-                  Remove-Item "D:\RDP_Data\stop.txt" -Force
-                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Shutdown trigger caught! Initializing unmount procedures..." -ForegroundColor Green
-                  break
-              }
-              Start-Sleep -Seconds 10
-              $elapsed += 10
-              if (($elapsed % 300) -eq 0) {
-                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] RDP session still active..."
-              }
-          }
+          .\scripts\Maintain-Connection.ps1 `
+              -Username "Neon" `
+              -TimeoutMinutes 350 `
+              -Language "en-US" `
+              -PasswordDisplay "[Use your RDP_PASS secret]"
 
       - name: "Cleanup Environment"
         if: always()
