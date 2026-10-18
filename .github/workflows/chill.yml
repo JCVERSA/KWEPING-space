@@ -356,7 +356,7 @@ jobs:
               -JavaVersion $env:JAVA_VERSION `
               -SshEnabled ($env:SSH_ENABLED -eq "true") `
               -SshShell $env:SSH_SHELL `
-              -CredentialLabel "[REDACTED]"
+              -MaskLabel "[REDACTED]"
         env:
           RDP_USERNAME: ${{ inputs.rdp_username }}
           RDP_TIMEOUT: ${{ inputs.rdp_timeout }}

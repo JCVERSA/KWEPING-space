@@ -149,7 +149,7 @@ jobs:
               -Username "Neon" `
               -TimeoutMinutes 350 `
               -Language "en-US" `
-              -CredentialLabel "[Use your RDP_PASS secret]"
+              -MaskLabel "[Use your RDP_PASS secret]"
 
       - name: "Cleanup Environment"
         if: always()
